@@ -155,6 +155,8 @@ model DrawingLinkShare {
   drawing         Drawing   @relation(fields: [drawingId], references: [id], onDelete: Cascade)
   permission      String
   tokenHash       String    @unique
+  encryptedToken  String?
+  revision        Int       @default(0)
   passphraseHash  String?
   expiresAt       DateTime?
   revokedAt       DateTime?
@@ -162,6 +164,8 @@ model DrawingLinkShare {
   lockedUntil     DateTime?
   lastUsedAt      DateTime?
   lastUsedIp      String?
+  uploadWindowAt  DateTime?
+  uploadCount     Int       @default(0)
   createdByUserId String
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -279,8 +283,22 @@ model DrawingFile {
   storage   String   // "db" | "s3"
   s3Key     String?  // set when storage = "s3"; full object key
   data      Bytes?   // set when storage = "db"; raw image bytes
-  createdAt DateTime @default(now())
+  createdAt          DateTime @default(now())
+  guestShareId       String?
+  guestOrphanCheckAt DateTime?
+  guestPublishedAt   DateTime?
 
   @@id([drawingId, fileId])
   @@index([drawingId])
+  @@index([guestOrphanCheckAt])
+}
+
+model GuestUploadCleanup {
+  s3Key     String   @id
+  drawingId String
+  sizeBytes Int
+  nextAttemptAt DateTime @default(now())
+
+  @@index([drawingId])
+  @@index([nextAttemptAt])
 }

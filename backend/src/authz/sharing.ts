@@ -1,11 +1,14 @@
-import type { PrismaClient } from "../generated/client";
+import type { Prisma } from "../generated/client";
 import crypto from "crypto";
 import { hashTokenForStorage } from "../auth/tokenSecurity";
+import { isTrashCollectionId } from "../routes/dashboard/trash";
+import type { GuestPrincipal } from "./guestLinkSecurity";
 
 export type DrawingPermission = "view" | "edit";
 export type DrawingAccess = "none" | DrawingPermission | "owner";
 
-export type DrawingPrincipal = { kind: "user"; userId: string };
+export type DrawingPrincipal =
+  { kind: "user"; userId: string } | GuestPrincipal;
 
 export const normalizeDrawingPermission = (
   input: unknown,
@@ -21,12 +24,42 @@ export const hashShareLinkToken = (token: string): string =>
   hashTokenForStorage(token);
 
 export const getDrawingAccess = async (params: {
-  prisma: PrismaClient;
+  prisma: Prisma.TransactionClient;
   principal: DrawingPrincipal | null;
   drawingId: string;
   now?: Date;
 }): Promise<DrawingAccess> => {
-  const nowMs = (params.now ?? new Date()).getTime();
+  const now = params.now ?? new Date();
+  const { principal, prisma, drawingId } = params;
+  if (principal?.kind === "guest") {
+    if (
+      principal.drawingId !== drawingId ||
+      principal.expiresAt <= now.getTime()
+    )
+      return "none";
+
+    const share = await prisma.drawingLinkShare.findFirst({
+      where: {
+        id: principal.shareId,
+        drawingId,
+        revision: principal.revision,
+        revokedAt: null,
+        encryptedToken: { not: null },
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
+      select: {
+        permission: true,
+        drawing: { select: { userId: true, collectionId: true } },
+      },
+    });
+    if (
+      !share ||
+      isTrashCollectionId(share.drawing.collectionId, share.drawing.userId)
+    ) {
+      return "none";
+    }
+    return normalizeDrawingPermission(share.permission) ?? "none";
+  }
 
   let baseAccess: DrawingAccess = "none";
 
@@ -77,16 +110,7 @@ export const getDrawingAccess = async (params: {
     }
   }
 
-  // Google Docs-style link policy: applies regardless of whether the visitor is signed in.
-  // If a drawing has an active link-share policy, possession of the drawing id URL grants the policy access.
-  const linkPolicy = await getActiveLinkShareAccess({
-    prisma: params.prisma,
-    drawingId: params.drawingId,
-    nowMs,
-  });
-  const linkAccess: DrawingAccess = linkPolicy ?? "none";
-
-  return maxAccess(baseAccess, linkAccess);
+  return baseAccess;
 };
 
 export const canViewDrawing = (
@@ -100,23 +124,6 @@ export const canEditDrawing = (
 
 export const isOwnerAccess = (access: DrawingAccess): boolean =>
   access === "owner";
-
-const getActiveLinkShareAccess = async (params: {
-  prisma: PrismaClient;
-  drawingId: string;
-  nowMs: number;
-}): Promise<DrawingPermission | null> => {
-  const linkShare = await params.prisma.drawingLinkShare.findFirst({
-    where: {
-      drawingId: params.drawingId,
-      revokedAt: null,
-      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date(params.nowMs) } }],
-    },
-    orderBy: { createdAt: "desc" },
-    select: { permission: true },
-  });
-  return normalizeDrawingPermission(linkShare?.permission);
-};
 
 const accessRank = (access: DrawingAccess): number => {
   switch (access) {

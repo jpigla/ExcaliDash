@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { MutableRefObject } from "react";
-import { isFileUploadSupported, uploadDrawingFile } from "../../api";
+import {
+  isAxiosError,
+  isFileUploadSupported,
+  uploadDrawingFile,
+} from "../../api";
+import { toast } from "sonner";
 import { compressExcalidrawFiles } from "../../utils/imageCompression";
 import type { UploadedFileRefs } from "./shared";
 
@@ -15,6 +20,8 @@ const UPLOAD_ATTEMPTS = 2;
 type UseEditorFileUploadsParams = {
   canEdit: boolean;
   drawingId: string | undefined;
+  guestShareId?: string;
+  onGuestAccessEnded?: () => void;
   isReady: boolean;
   excalidrawAPI: MutableRefObject<any>;
   isSyncing: MutableRefObject<boolean>;
@@ -77,6 +84,8 @@ const runWithConcurrency = async (
 export const useEditorFileUploads = ({
   canEdit,
   drawingId,
+  guestShareId,
+  onGuestAccessEnded,
   isReady,
   excalidrawAPI,
   isSyncing,
@@ -84,12 +93,14 @@ export const useEditorFileUploads = ({
   uploadedRefs,
 }: UseEditorFileUploadsParams) => {
   const inFlightRef = useRef<Set<string>>(new Set());
+  const rejectedGuestFileIds = useRef(new Set<string>());
   const canEditRef = useRef(canEdit);
   const drawingSessionRef = useRef({ drawingId });
   useLayoutEffect(() => {
     if (drawingSessionRef.current.drawingId !== drawingId) {
       drawingSessionRef.current = { drawingId };
       inFlightRef.current = new Set();
+      rejectedGuestFileIds.current.clear();
       uploadedRefs.current = {};
     }
   }, [drawingId, uploadedRefs]);
@@ -98,7 +109,12 @@ export const useEditorFileUploads = ({
   }, [canEdit]);
 
   const scanNow = useCallback(async () => {
-    if (!canEditRef.current || !drawingId || !isFileUploadSupported()) return;
+    if (
+      !canEditRef.current ||
+      !drawingId ||
+      (!guestShareId && !isFileUploadSupported())
+    )
+      return;
     const editor = excalidrawAPI.current;
     const session = drawingSessionRef.current;
     const inFlight = inFlightRef.current;
@@ -119,6 +135,7 @@ export const useEditorFileUploads = ({
         typeof file.dataURL === "string" &&
         file.dataURL.startsWith("data:") &&
         !uploadedRefs.current[id] &&
+        !rejectedGuestFileIds.current.has(id) &&
         !inFlight.has(id)
       );
     });
@@ -171,12 +188,39 @@ export const useEditorFileUploads = ({
             parsed.bytes,
             (typeof file?.mimeType === "string" && file.mimeType) ||
               parsed.mimeType,
+            guestShareId,
           );
           // null => backend lacks the endpoint; stop trying for the session.
           if (result && isCurrent()) uploadedRefs.current[id] = result.url;
           inFlight.delete(id);
           return;
-        } catch {
+        } catch (error) {
+          const status = isAxiosError(error)
+            ? error.response?.status
+            : undefined;
+          if (
+            guestShareId &&
+            status &&
+            status >= 400 &&
+            status < 500 &&
+            status !== 429
+          ) {
+            rejectedGuestFileIds.current.add(id);
+            inFlight.delete(id);
+            if (status === 401 || status === 403 || status === 404) {
+              if (isCurrent()) onGuestAccessEnded?.();
+            } else if (status === 415) {
+              toast.error(
+                "Guests can upload PNG, JPEG, GIF, WebP, AVIF, or BMP images.",
+                { id: "guest-image-format" },
+              );
+            } else if (status === 413) {
+              toast.error("This image is too large to upload.", {
+                id: "guest-image-size",
+              });
+            }
+            return;
+          }
           if (attempt === UPLOAD_ATTEMPTS - 1) {
             // Give up for now; a later scan retries (server interns meanwhile).
             inFlight.delete(id);
@@ -189,7 +233,15 @@ export const useEditorFileUploads = ({
       candidateIds.map((id) => () => uploadOne(id)),
       UPLOAD_CONCURRENCY,
     );
-  }, [drawingId, excalidrawAPI, isSyncing, latestFiles, uploadedRefs]);
+  }, [
+    drawingId,
+    excalidrawAPI,
+    guestShareId,
+    isSyncing,
+    latestFiles,
+    onGuestAccessEnded,
+    uploadedRefs,
+  ]);
 
   useEffect(() => {
     if (!canEdit || !drawingId || !isReady) return;

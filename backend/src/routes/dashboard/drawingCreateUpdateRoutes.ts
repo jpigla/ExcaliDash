@@ -16,6 +16,28 @@ import {
 import type { DrawingRouteContext } from "./drawingRouteContext";
 import { applySceneUpdateTx, isVersionConflict } from "./sceneUpdate";
 import { collectRetainedDrawingFileIds } from "../storage/retainedFiles";
+import { isGuestRequest } from "../../authz/guestLinkSecurity";
+import {
+  admitGuestUpload,
+  checkGuestUploadQuota,
+  guestUploadMetadata,
+  guestUploadProvisionalMs,
+  GuestUploadLimitError,
+} from "../../guestUploadPolicy";
+import { storeDrawingFileOnce } from "../../drawingFileStore";
+import {
+  guestDrawingResponse,
+  guestSceneFileIds,
+  scopeGuestDrawingFiles,
+} from "./drawingGuestResponse";
+import { isInlineGuestImage } from "../../fileProcessing";
+import {
+  guestAccessEnded,
+  lockDrawingForGuestAccess,
+  revokeAllDrawingGuestLinks,
+} from "./drawingGuestLock";
+
+const guestImageUnavailable = new Error("Guest image unavailable");
 
 export const registerDrawingCreateUpdateRoutes = (
   app: express.Express,
@@ -37,6 +59,8 @@ export const registerDrawingCreateUpdateRoutes = (
     parseJsonField,
     getRequestPrincipal,
     respondWithAuthErrorIfPresent,
+    revalidateDrawingAccess,
+    emitDrawingScene,
     io,
   } = context;
 
@@ -199,6 +223,9 @@ export const registerDrawingCreateUpdateRoutes = (
     "/drawings/:id",
     optionalAuth,
     asyncHandler(async (req, res) => {
+      if (isGuestRequest(req)) {
+        res.set("Cache-Control", "no-store");
+      }
       const principal = await getRequestPrincipal(req);
 
       const { id } = req.params;
@@ -242,6 +269,29 @@ export const registerDrawingCreateUpdateRoutes = (
         version?: number;
       };
 
+      if (
+        principal?.kind === "guest" &&
+        (payload.name !== undefined || payload.collectionId !== undefined)
+      ) {
+        return res.status(403).json({
+          error: "Forbidden",
+          message: "Guests can edit the scene but cannot manage the drawing",
+        });
+      }
+
+      const authorizeGuestWrite =
+        principal?.kind === "guest"
+          ? async (tx: Prisma.TransactionClient) => {
+              await lockDrawingForGuestAccess(tx, id);
+              const freshAccess = await getDrawingAccess({
+                prisma: tx,
+                principal,
+                drawingId: id,
+              });
+              if (!canEditDrawing(freshAccess)) throw guestAccessEnded;
+            }
+          : undefined;
+
       const ownerUserId = existingDrawing.userId;
       const actingUserId =
         principal?.kind === "user" ? principal.userId : ownerUserId;
@@ -277,11 +327,88 @@ export const registerDrawingCreateUpdateRoutes = (
       let knownFileIdsBeforeUpdate: Set<string> | null = null;
       if (payload.files !== undefined) {
         knownFileIdsBeforeUpdate = await listDrawingFileIds(id);
-        processedFilesForUpdate = await internDrawingFiles(
-          payload.files,
-          ownerUserId,
-          id,
-        );
+        let filesToIntern = payload.files;
+        if (principal?.kind === "guest") {
+          const visible = guestSceneFileIds(
+            payload.elements ?? parseJsonField(existingDrawing.elements, []),
+          );
+          filesToIntern = Object.fromEntries(
+            Object.entries(payload.files).filter(([fileId]) =>
+              visible.has(fileId),
+            ),
+          );
+          const existingFiles = parseJsonField<
+            Record<string, { dataURL?: unknown }>
+          >(existingDrawing.files, {});
+          filesToIntern = scopeGuestDrawingFiles(
+            id,
+            filesToIntern,
+            [...knownFileIdsBeforeUpdate].map((fileId) => ({ fileId })),
+          );
+          for (const [fileId, file] of Object.entries(filesToIntern)) {
+            const dataURL = (file as { dataURL?: unknown } | null)?.dataURL;
+            if (
+              knownFileIdsBeforeUpdate.has(fileId) ||
+              isInlineGuestImage(dataURL)
+            )
+              continue;
+            if (
+              typeof dataURL === "string" &&
+              dataURL === existingFiles[fileId]?.dataURL
+            ) {
+              delete filesToIntern[fileId];
+              continue;
+            }
+            return res.status(415).json({
+              error: "Unsupported guest image",
+              message: "Guests can upload raster images only",
+            });
+          }
+        }
+        try {
+          processedFilesForUpdate = await internDrawingFiles(
+            filesToIntern,
+            ownerUserId,
+            id,
+            principal?.kind === "guest" && authorizeGuestWrite
+              ? (content) =>
+                  prisma.$transaction(async (tx) => {
+                    await authorizeGuestWrite(tx);
+                    await checkGuestUploadQuota(
+                      tx,
+                      principal,
+                      id,
+                      content.fileId,
+                      content.sizeBytes ?? 0,
+                    );
+                    return storeDrawingFileOnce(tx, {
+                      ...content,
+                      ...guestUploadMetadata(principal.shareId),
+                    });
+                  })
+              : undefined,
+            principal?.kind === "guest"
+              ? async ({ fileId, sizeBytes }) => {
+                  await admitGuestUpload(prisma, principal);
+                  await checkGuestUploadQuota(
+                    prisma,
+                    principal,
+                    id,
+                    fileId,
+                    sizeBytes,
+                  );
+                }
+              : undefined,
+          );
+        } catch (error) {
+          if (error instanceof GuestUploadLimitError) {
+            return res
+              .status(error.status)
+              .json({ error: error.message, code: error.code });
+          }
+          if (error !== guestAccessEnded) throw error;
+          return res.status(404).json({ error: "Drawing not found" });
+        }
         requiredFileIdsForUpdate = Object.entries(processedFilesForUpdate)
           .filter(([fileId, file]) => {
             const processedUrl = (file as { dataURL?: unknown } | null)
@@ -315,6 +442,10 @@ export const registerDrawingCreateUpdateRoutes = (
           typeof processedPreview === "string" ? processedPreview : null;
       }
 
+      const movingToTrash = isTrashCollectionId(
+        payload.collectionId,
+        ownerUserId,
+      );
       if (payload.collectionId !== undefined) {
         if (!isOwnerAccess(access)) {
           return res.status(403).json({
@@ -322,7 +453,7 @@ export const registerDrawingCreateUpdateRoutes = (
             message: "Only the owner can move drawings between collections",
           });
         }
-        if (payload.collectionId === "trash") {
+        if (movingToTrash) {
           await ensureTrashCollection(prisma, ownerUserId);
           (data as Prisma.DrawingUncheckedUpdateInput).collectionId =
             trashCollectionId;
@@ -361,13 +492,64 @@ export const registerDrawingCreateUpdateRoutes = (
             versionGuard:
               payload.version !== undefined ? payload.version : "optimistic",
             maxRetries: payload.version === undefined ? 2 : 0,
-            mutate: () => ({
-              data,
-              incomingFiles: processedFilesForUpdate,
-              requiredFileIds: requiredFileIdsForUpdate,
-            }),
+            authorizeWrite: authorizeGuestWrite,
+            revokeGuestLinks: movingToTrash,
+            mutate: async (current, tx) => {
+              if (
+                principal?.kind === "guest" &&
+                payload.elements !== undefined
+              ) {
+                const currentIds = guestSceneFileIds(
+                  parseJsonField(current.elements, []),
+                );
+                const added = [...guestSceneFileIds(payload.elements)].filter(
+                  (fileId) => !currentIds.has(fileId),
+                );
+                if (added.length) {
+                  const pending = await tx.drawingFile.findMany({
+                    where: { drawingId: id, fileId: { in: added } },
+                    select: {
+                      fileId: true,
+                      guestShareId: true,
+                      guestPublishedAt: true,
+
+                      createdAt: true,
+                    },
+                  });
+                  const allowed = new Set(
+                    pending
+                      .filter(
+                        (file) =>
+                          file.guestShareId === principal.shareId &&
+                          file.guestPublishedAt === null &&
+                          file.createdAt.getTime() >
+                            Date.now() - guestUploadProvisionalMs,
+                      )
+                      .map(({ fileId }) => fileId),
+                  );
+                  if (added.some((fileId) => !allowed.has(fileId)))
+                    throw guestImageUnavailable;
+                }
+              }
+              return {
+                data,
+                incomingFiles: processedFilesForUpdate,
+                requiredFileIds: requiredFileIdsForUpdate,
+              };
+            },
           });
           updatedDrawing = result.drawing;
+        } else if (movingToTrash || authorizeGuestWrite) {
+          updatedDrawing = await prisma.$transaction(async (tx) => {
+            await authorizeGuestWrite?.(tx);
+            const result = await tx.drawing.updateMany({
+              where: { id },
+              data,
+            });
+            if (result.count === 0) return null;
+            if (movingToTrash) await revokeAllDrawingGuestLinks(tx, id);
+            return tx.drawing.findUnique({ where: { id } });
+          });
         } else {
           const updateResult = await prisma.drawing.updateMany({
             where: { id },
@@ -385,6 +567,15 @@ export const registerDrawingCreateUpdateRoutes = (
         // a concurrent valid save may have checked these rows without having
         // committed its scene yet. Guarded trim reclaims unused rows and their
         // exact S3 generations after owning the drawing's version update.
+        if (error === guestImageUnavailable) {
+          return res.status(409).json({
+            error: "Image is not available for this guest link",
+            code: "GUEST_IMAGE_UNAVAILABLE",
+          });
+        }
+        if (error === guestAccessEnded) {
+          return res.status(404).json({ error: "Drawing not found" });
+        }
         if (isVersionConflict(error)) {
           const latestDrawing = await prisma.drawing.findFirst({
             where: { id },
@@ -406,13 +597,20 @@ export const registerDrawingCreateUpdateRoutes = (
         return res.status(404).json({ error: "Drawing not found" });
       }
       invalidateDrawingsCache();
+      if (payload.collectionId !== undefined) {
+        try {
+          await revalidateDrawingAccess?.(id);
+        } catch (error) {
+          console.error("Failed to revalidate live drawing access:", error);
+        }
+      }
 
       const savedElements = parseJsonField(updatedDrawing.elements, []);
       const savedFiles = parseJsonField(updatedDrawing.files, {});
       if (isSceneUpdate) {
         // A peer can join after the realtime delta but before this autosave.
         // Deliver the committed scene so that edit is eventually received.
-        io?.to(`drawing_${id}`).emit("element-update", {
+        const scenePayload = {
           drawingId: id,
           persisted: true,
           elements: savedElements,
@@ -420,9 +618,25 @@ export const registerDrawingCreateUpdateRoutes = (
           elementOrder: savedElements
             .map((element: { id?: unknown } | null) => element?.id)
             .filter((elementId: unknown) => typeof elementId === "string"),
-        });
+        };
+        if (emitDrawingScene) await emitDrawingScene(id, scenePayload);
+        else io?.to(`drawing_${id}`).emit("element-update", scenePayload);
       }
 
+      if (principal?.kind === "guest" && access === "edit") {
+        const storedFiles = await prisma.drawingFile.findMany({
+          where: { drawingId: id },
+          select: { fileId: true },
+        });
+        return res.json(
+          guestDrawingResponse(
+            updatedDrawing,
+            access,
+            parseJsonField,
+            storedFiles,
+          ),
+        );
+      }
       return res.json({
         ...updatedDrawing,
         collectionId: toPublicTrashCollectionId(

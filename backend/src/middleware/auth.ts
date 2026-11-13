@@ -1,3 +1,4 @@
+import { isGuestRequest } from "../authz/guestLinkSecurity";
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { config } from "../config";
@@ -215,6 +216,10 @@ export const createAuthMiddleware = ({
     res: Response,
     next: NextFunction,
   ): Promise<void> => {
+    if (isGuestRequest(req)) {
+      res.status(401).json({ error: "Account authentication required" });
+      return;
+    }
     try {
       const authEnabled = await authModeService.getAuthEnabled();
       if (!authEnabled) {
@@ -340,6 +345,7 @@ export const createAuthMiddleware = ({
     res: Response,
     next: NextFunction,
   ): Promise<void> => {
+    if (isGuestRequest(req)) return next();
     try {
       const authEnabled = await authModeService.getAuthEnabled();
       if (!authEnabled) {

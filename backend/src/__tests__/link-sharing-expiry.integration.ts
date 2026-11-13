@@ -169,15 +169,14 @@ describe("Link Sharing - Expiry Resolution", () => {
     expect(Math.abs(stored - oneYearOut.getTime())).toBeLessThan(5 * 60_000);
   });
 
-  it("caps explicit far-future edit dates to max ttl", async () => {
+  it("honors explicit far-future edit dates", async () => {
     const drawing = await createDrawing();
     const oneYearOut = new Date(Date.now() + 365 * DAY_MS);
     const res = await createLinkShare(drawing.id, "edit", {
       expiresAt: oneYearOut.toISOString(),
     });
     const stored = new Date(res.body.share.expiresAt as string).getTime();
-    expect(stored).toBeGreaterThan(Date.now() + 89 * DAY_MS);
-    expect(stored).toBeLessThan(Date.now() + 91 * DAY_MS);
+    expect(stored).toBe(oneYearOut.getTime());
   });
 
   it("rejects explicit past and invalid expiry values", async () => {

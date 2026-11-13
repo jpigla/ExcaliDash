@@ -45,6 +45,7 @@ type UseEditorCommandsParams = {
   canEdit: boolean;
   debouncedSaveLibrary: (items: any[]) => void;
   drawingId: string | undefined;
+  guestShareId?: string;
   drawingName: string;
   isSavingOnLeave: boolean;
   newName: string;
@@ -76,6 +77,7 @@ export const useEditorCommands = ({
   canEdit,
   debouncedSaveLibrary,
   drawingId,
+  guestShareId,
   drawingName,
   enqueueSceneSave,
   isSavingOnLeave,
@@ -147,18 +149,22 @@ export const useEditorCommands = ({
       }
       const appState = editor.getAppState();
       const files = editor.getFiles() || {};
-      saveDrawingKeepalive(drawingId, {
-        elements: Array.from(safeElements),
-        appState: getPersistedAppState(appState),
-        // Same slimmed shape as the debounced save: uploaded images ship as a
-        // ref, un-uploaded ones stay inline (server interns them on receipt).
-        files: applyUploadedFileRefs(files, refs.uploadedRefs.current),
-        version: refs.currentDrawingVersion.current ?? undefined,
-      });
+      saveDrawingKeepalive(
+        drawingId,
+        {
+          elements: Array.from(safeElements),
+          appState: getPersistedAppState(appState),
+          // Same slimmed shape as the debounced save: uploaded images ship as a
+          // ref, un-uploaded ones stay inline (server interns them on receipt).
+          files: applyUploadedFileRefs(files, refs.uploadedRefs.current),
+          version: refs.currentDrawingVersion.current ?? undefined,
+        },
+        ...(guestShareId ? [guestShareId] : []),
+      );
     };
     window.addEventListener("pagehide", handlePageHide);
     return () => window.removeEventListener("pagehide", handlePageHide);
-  }, [canEdit, drawingId, refs, resolveSafeSnapshot]);
+  }, [canEdit, drawingId, guestShareId, refs, resolveSafeSnapshot]);
 
   const handleRenameSubmit = useCallback(
     async (e: FormEvent) => {

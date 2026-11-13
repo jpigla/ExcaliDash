@@ -4,12 +4,19 @@ import type { MutableRefObject } from "react";
 import { toast } from "sonner";
 import * as api from "../../api";
 import { rehydrateFilesProgressive } from "../../utils/rehydrateFiles";
-import { getPersistedAppState, hasRenderableElements } from "./shared";
+import {
+  getPersistedAppState,
+  hasRenderableElements,
+  isGuestElementTombstone,
+  isInlineImageFile,
+} from "./shared";
 
 type AccessLevel = "none" | "view" | "edit" | "owner";
 
 type SceneLoaderParams = {
   id: string | undefined;
+  guestShareId?: string;
+  onGuestAccessEnded?: () => void;
   user: unknown;
   location: {
     pathname: string;
@@ -62,6 +69,8 @@ const buildEmptyScene = () => ({
 
 export const useEditorSceneLoader = ({
   id,
+  guestShareId,
+  onGuestAccessEnded,
   user,
   location,
   navigate,
@@ -129,7 +138,7 @@ export const useEditorSceneLoader = ({
             })
           : Promise.resolve([]);
         const [data, libraryItems] = await Promise.all([
-          api.getDrawing(id),
+          api.getDrawing(id, ...(guestShareId ? [guestShareId] : [])),
           libraryItemsPromise,
         ]);
         if (cancelled) return;
@@ -139,9 +148,15 @@ export const useEditorSceneLoader = ({
             data.accessLevel === "edit" ||
             data.accessLevel === "owner"
             ? data.accessLevel
-            : "owner",
+            : guestShareId
+              ? "none"
+              : "owner",
         );
-        const rawElements = data.elements || [];
+        const rawElements = guestShareId
+          ? (data.elements || []).filter(
+              (element) => !isGuestElementTombstone(element),
+            )
+          : data.elements || [];
         // Paint first, stream images in. In S3 (or db-ref) mode the loaded
         // files carry `/api/files/...` (or public S3) references rather than
         // inline data: URLs. We no longer await re-inlining before the first
@@ -151,7 +166,14 @@ export const useEditorSceneLoader = ({
         // elements stay non-saved and show Excalidraw's own loading state until
         // their bytes arrive.
         const files: Record<string, any> = data.files || {};
-        const elements = normalizeImageElementStatus(rawElements, files);
+        const canvasFiles = guestShareId
+          ? Object.fromEntries(
+              Object.entries(files).filter(([, file]) =>
+                isInlineImageFile(file),
+              ),
+            )
+          : files;
+        const elements = normalizeImageElementStatus(rawElements, canvasFiles);
         const hasPreview =
           typeof data.preview === "string" && data.preview.trim().length > 0;
         const loadedRenderable = hasRenderableElements(elements);
@@ -175,7 +197,7 @@ export const useEditorSceneLoader = ({
         setInitialData({
           elements,
           appState: hydratedAppState,
-          files,
+          files: canvasFiles,
           scrollToContent: true,
           libraryItems,
         });
@@ -241,9 +263,22 @@ export const useEditorSceneLoader = ({
             }
           }
         };
-        void rehydrateFilesProgressive(files, handleFileReady, () => cancelled);
+        void rehydrateFilesProgressive(
+          files,
+          handleFileReady,
+          () => cancelled,
+          guestShareId ? { drawingId: id, guestShareId } : undefined,
+        );
       } catch (err) {
         if (cancelled) return;
+        if (
+          guestShareId &&
+          api.isAxiosError(err) &&
+          [401, 403, 404].includes(err.response?.status ?? 0)
+        ) {
+          onGuestAccessEnded?.();
+          return;
+        }
         console.error("Failed to load drawing", err);
         let message = "Failed to load drawing";
         if (api.isAxiosError(err)) {
@@ -293,6 +328,8 @@ export const useEditorSceneLoader = ({
     };
   }, [
     id,
+    guestShareId,
+    onGuestAccessEnded,
     location.hash,
     location.pathname,
     location.search,

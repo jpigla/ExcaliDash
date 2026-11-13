@@ -1,6 +1,7 @@
 import type { Drawing, DrawingSummary } from "../types";
 import { normalizePreviewSvg } from "../utils/previewSvg";
 import { api, isAxiosError } from "./client";
+import { guestShareHeaders } from "./guestLinks";
 
 // Per-file image upload capability. The endpoint below is served by newer
 // backends only; against an older server the route 404s (or 501s). The first
@@ -28,8 +29,9 @@ export const uploadDrawingFile = async (
   fileId: string,
   body: ArrayBuffer | Uint8Array | Blob,
   mimeType: string,
+  guestShareId?: string,
 ): Promise<UploadedFileRef | null> => {
-  if (!fileUploadSupported) return null;
+  if (!fileUploadSupported && !guestShareId) return null;
   try {
     const response = await api.put<{ url?: string }>(
       `/drawings/${drawingId}/files/${fileId}`,
@@ -37,6 +39,7 @@ export const uploadDrawingFile = async (
       {
         headers: {
           "Content-Type": mimeType || "application/octet-stream",
+          ...guestShareHeaders(guestShareId),
         },
       },
     );
@@ -47,6 +50,7 @@ export const uploadDrawingFile = async (
     return { url };
   } catch (err) {
     if (
+      !guestShareId &&
       isAxiosError(err) &&
       (err.response?.status === 404 || err.response?.status === 501)
     ) {
@@ -192,8 +196,10 @@ export async function getSharedDrawings(
   };
 }
 
-export const getDrawing = async (id: string) => {
-  const response = await api.get<Drawing>(`/drawings/${id}`);
+export const getDrawing = async (id: string, guestShareId?: string) => {
+  const response = await api.get<Drawing>(`/drawings/${id}`, {
+    headers: guestShareHeaders(guestShareId),
+  });
   return deserializeDrawing(response.data);
 };
 
@@ -236,8 +242,8 @@ export type DrawingLinkShareRow = {
   expiresAt: string | null;
   revokedAt: string | null;
   createdAt: string | number | Date;
-  updatedAt: string | number | Date;
-  lastUsedAt: string | null;
+  passwordProtected: boolean;
+  token: string | null;
 };
 
 export const getDrawingSharing = async (
@@ -287,16 +293,37 @@ export const setSharedDrawingHidden = async (
   return response.data;
 };
 
+export type LinkShareSettings = {
+  permission: "view" | "edit";
+  expiresAt?: string | null;
+  passphrase?: string | null;
+};
+
+export const listLinkShares = async (drawingId: string) => {
+  const response = await api.get<{ shares: DrawingLinkShareRow[] }>(
+    `/drawings/${drawingId}/link-shares`,
+  );
+  return response.data.shares;
+};
+
 export const createLinkShare = async (
   drawingId: string,
-  params: {
-    permission: "view" | "edit";
-    expiresAt?: string | null;
-    passphrase?: string;
-  },
+  params: LinkShareSettings,
 ): Promise<{ share: DrawingLinkShareRow }> => {
   const response = await api.post<{ share: DrawingLinkShareRow }>(
     `/drawings/${drawingId}/link-shares`,
+    params,
+  );
+  return response.data;
+};
+
+export const updateLinkShare = async (
+  drawingId: string,
+  shareId: string,
+  params: Partial<LinkShareSettings>,
+): Promise<{ share: DrawingLinkShareRow }> => {
+  const response = await api.patch<{ share: DrawingLinkShareRow }>(
+    `/drawings/${drawingId}/link-shares/${shareId}`,
     params,
   );
   return response.data;
@@ -325,8 +352,14 @@ export const createDrawing = async (
   return response.data;
 };
 
-export const updateDrawing = async (id: string, data: Partial<Drawing>) => {
-  const response = await api.put<Drawing>(`/drawings/${id}`, data);
+export const updateDrawing = async (
+  id: string,
+  data: Partial<Drawing>,
+  guestShareId?: string,
+) => {
+  const response = await api.put<Drawing>(`/drawings/${id}`, data, {
+    headers: guestShareHeaders(guestShareId),
+  });
   return deserializeDrawing(response.data);
 };
 

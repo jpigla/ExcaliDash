@@ -16,6 +16,11 @@ type UseDashboardDrawingActionsParams = {
   navigate: NavigateFunction;
 };
 
+const confirmTrashMove = () =>
+  window.confirm(
+    "Move to Trash? All guest links for these drawings will be permanently revoked.",
+  );
+
 const showTemporaryViewerError = (
   message: string,
   setViewerActionError: React.Dispatch<React.SetStateAction<string | null>>,
@@ -136,6 +141,7 @@ export const useDashboardDrawingActions = ({
       setDrawingToDelete(id);
       return;
     }
+    if (!confirmTrashMove()) return;
     removeDrawingFromList(id);
     try {
       await api.updateDrawing(id, { collectionId: "trash" });
@@ -157,6 +163,7 @@ export const useDashboardDrawingActions = ({
   };
 
   const executeBulkMoveToTrash = async () => {
+    if (!confirmTrashMove()) return;
     const ids = Array.from(selectedIds);
     setDrawings((current) => {
       const next = current.filter((drawing) => !selectedIds.has(drawing.id));
@@ -200,6 +207,7 @@ export const useDashboardDrawingActions = ({
 
   const handleBulkMove = async (collectionId: string | null) => {
     if (selectedIds.size === 0) return;
+    if (collectionId === "trash" && !confirmTrashMove()) return;
     const idsToMove = Array.from(selectedIds);
     moveOutOfCurrentView(
       (drawing) =>
@@ -258,6 +266,7 @@ export const useDashboardDrawingActions = ({
     id: string,
     collectionId: string | null,
   ) => {
+    if (collectionId === "trash" && !confirmTrashMove()) return;
     moveOutOfCurrentView(
       (drawing) => (drawing.id === id ? { ...drawing, collectionId } : drawing),
       (drawing) => {
@@ -303,6 +312,7 @@ export const useDashboardDrawingActions = ({
     }
     const draggedDrawingId = event.dataTransfer.getData("drawingId");
     if (!draggedDrawingId) return;
+    if (targetCollectionId === "trash" && !confirmTrashMove()) return;
     const idsToMove = selectedIds.has(draggedDrawingId)
       ? new Set(selectedIds)
       : new Set([draggedDrawingId]);

@@ -23,6 +23,7 @@ export const registerDrawingDeleteDuplicateRoutes = (
     parseJsonField,
     cleanupS3FilesForDrawing,
     cloneS3FileReferences,
+    revalidateDrawingAccess,
   } = context;
   app.delete(
     "/drawings/:id",
@@ -58,6 +59,11 @@ export const registerDrawingDeleteDuplicateRoutes = (
         return res.status(404).json({ error: "Drawing not found" });
       }
       invalidateDrawingsCache();
+      try {
+        await revalidateDrawingAccess?.(id);
+      } catch (error) {
+        console.error("Failed to revalidate live drawing access:", error);
+      }
 
       if (config.enableAuditLogging) {
         await logAuditEvent({

@@ -1,3 +1,6 @@
+import { API_URL } from "../api/client";
+import { guestShareHeaders } from "../api/guestLinks";
+
 /**
  * S3-mode file rehydration.
  *
@@ -50,14 +53,21 @@ const blobToDataUrl = (blob: Blob): Promise<string> =>
  * failed fetch must leave the original reference untouched rather than blank
  * the image.
  */
+type GuestFileAccess = { drawingId: string; guestShareId: string };
+
 const fetchAsDataUrl = async (
   url: string,
   mimeType: unknown,
   fallbackUrl?: string,
+  guestShareId?: string,
 ): Promise<string | null> => {
   try {
-    let response = await fetch(url, { credentials: "same-origin" });
-    if (response.status === 404 && fallbackUrl) {
+    let response = await fetch(url, {
+      credentials: guestShareId ? "include" : "same-origin",
+      headers: guestShareHeaders(guestShareId),
+      ...(guestShareId && { redirect: "error", cache: "no-store" }),
+    });
+    if (!guestShareId && response.status === 404 && fallbackUrl) {
       response = await fetch(fallbackUrl, { credentials: "same-origin" });
     }
     if (!response.ok) return null;
@@ -92,14 +102,20 @@ const fetchAsDataUrl = async (
  */
 export const rehydrateFilesFromUrls = async (
   files: Record<string, any> | null | undefined,
+  guest?: GuestFileAccess,
 ): Promise<Record<string, any>> => {
   if (!files || typeof files !== "object") return files ?? {};
   if (!filesNeedRehydration(files)) return files;
 
   const result: Record<string, any> = { ...files };
-  await rehydrateFilesProgressive(files, (fileId, file) => {
-    result[fileId] = file;
-  });
+  await rehydrateFilesProgressive(
+    files,
+    (fileId, file) => {
+      result[fileId] = file;
+    },
+    undefined,
+    guest,
+  );
 
   return result;
 };
@@ -184,6 +200,7 @@ export const rehydrateFilesProgressive = async (
   files: Record<string, any> | null | undefined,
   onFileReady: (fileId: string, file: Record<string, any>) => void,
   isCancelled?: () => boolean,
+  guest?: GuestFileAccess,
 ): Promise<void> => {
   if (!files || typeof files !== "object") return;
   const entries = Object.entries(files).filter(([, file]) =>
@@ -197,8 +214,12 @@ export const rehydrateFilesProgressive = async (
       if (isCancelled?.()) return;
       const [fileId, file] = entries[cursor++];
       const dataURL = await fetchAsDataUrl(
-        (file as any).dataURL,
+        guest
+          ? `${API_URL.replace(/\/$/, "")}/files/${encodeURIComponent(guest.drawingId)}/${encodeURIComponent(fileId)}`
+          : (file as any).dataURL,
         (file as any)?.mimeType,
+        undefined,
+        guest?.guestShareId,
       );
       if (isCancelled?.()) return;
       if (dataURL) {

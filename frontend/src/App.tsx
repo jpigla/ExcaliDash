@@ -125,6 +125,7 @@ function App() {
                         </ProtectedRoute>
                       }
                     />
+                    <Route path="/shared/:id/:shareId" element={<Editor />} />
                     <Route path="/shared/:id" element={<Editor />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Routes>

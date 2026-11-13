@@ -21,12 +21,17 @@ import { UserAvatar as ProfileAvatar } from "../../components/UserAvatar";
 import type { UserIdentity } from "../../utils/identity";
 import { UIOptions, validateEmbeddableUrl } from "./shared";
 
+const guestUIOptions = {
+  canvasActions: { ...UIOptions.canvasActions, saveAsImage: false },
+};
+
 interface Peer extends UserIdentity {
   isActive: boolean;
 }
 
 type EditorViewProps = {
   id?: string;
+  isGuest: boolean;
   accessLevel: "none" | "view" | "edit" | "owner";
   autoHideEnabled: boolean;
   autosaveFailing: boolean;
@@ -101,6 +106,7 @@ const CollaboratorAvatar = ({
 
 export const EditorView: React.FC<EditorViewProps> = ({
   id,
+  isGuest,
   accessLevel,
   autoHideEnabled,
   autosaveFailing,
@@ -190,7 +196,7 @@ export const EditorView: React.FC<EditorViewProps> = ({
         ) : (
           <h1
             className="font-medium text-gray-900 dark:text-white px-2 py-1 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded cursor-text"
-            onDoubleClick={onRenameStart}
+            onDoubleClick={isGuest ? undefined : onRenameStart}
           >
             {drawingName}
           </h1>
@@ -212,7 +218,7 @@ export const EditorView: React.FC<EditorViewProps> = ({
             Read-only
           </span>
         ) : null}
-        {canEdit && id ? (
+        {!isGuest && canEdit && id ? (
           <button
             ref={historyButtonRef}
             onClick={onHistoryOpen}
@@ -245,14 +251,18 @@ export const EditorView: React.FC<EditorViewProps> = ({
             <ChevronDown size={20} />
           )}
         </button>
-        <div className="h-6 w-px bg-gray-300 dark:bg-gray-700" />
-        <button
-          onClick={onExportClick}
-          className="ui-toolbar-button"
-          title="Export drawing"
-        >
-          <Download size={20} />
-        </button>
+        {!isGuest && (
+          <>
+            <div className="h-6 w-px bg-gray-300 dark:bg-gray-700" />
+            <button
+              onClick={onExportClick}
+              className="ui-toolbar-button"
+              title="Export drawing"
+            >
+              <Download size={20} />
+            </button>
+          </>
+        )}
         <div className="h-6 w-px bg-gray-300 dark:bg-gray-700" />
         <div className="flex items-center">
           <CollaboratorAvatar user={me} label={`${me.name} (You)`} />
@@ -323,7 +333,7 @@ export const EditorView: React.FC<EditorViewProps> = ({
           onPointerUpdate={onPointerUpdate}
           onLibraryChange={onLibraryChange}
           excalidrawAPI={onSetExcalidrawAPI}
-          UIOptions={UIOptions}
+          UIOptions={isGuest ? guestUIOptions : UIOptions}
           validateEmbeddable={validateEmbeddableUrl}
           viewModeEnabled={!canEdit || isHistoryOpen}
         >
@@ -331,7 +341,7 @@ export const EditorView: React.FC<EditorViewProps> = ({
             <MainMenu.Item onSelect={onToggleTheme} shortcut="Shift+Alt+D">
               {theme === "dark" ? "Light mode" : "Dark mode"}
             </MainMenu.Item>
-            <MainMenu.DefaultItems.SaveAsImage />
+            {!isGuest && <MainMenu.DefaultItems.SaveAsImage />}
             <MainMenu.DefaultItems.ClearCanvas />
             <MainMenu.DefaultItems.ChangeCanvasBackground />
             <MainMenu.DefaultItems.Help />

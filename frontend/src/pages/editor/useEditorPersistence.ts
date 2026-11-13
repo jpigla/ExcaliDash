@@ -57,6 +57,8 @@ type PersistenceRefs = {
 
 type UseEditorPersistenceParams = {
   drawingId?: string;
+  guestShareId?: string;
+  onGuestAccessEnded?: () => void;
   canEdit: boolean;
   refs: PersistenceRefs;
   user: unknown;
@@ -74,6 +76,8 @@ type UseEditorPersistenceParams = {
 
 export const useEditorPersistence = ({
   drawingId: activeDrawingId,
+  guestShareId,
+  onGuestAccessEnded,
   canEdit,
   refs,
   user,
@@ -226,12 +230,16 @@ export const useEditorPersistence = ({
       ): Promise<void> => {
         if (!canEditRef.current || !isCurrent()) return;
         try {
-          const updated = await api.updateDrawing(drawingId, {
-            elements: Array.from(elementsToSave),
-            appState: persistableAppState,
-            ...(sendFiles ? { files: filesToSave } : {}),
-            version: refs.currentDrawingVersion.current ?? undefined,
-          });
+          const updated = await api.updateDrawing(
+            drawingId,
+            {
+              elements: Array.from(elementsToSave),
+              appState: persistableAppState,
+              ...(sendFiles ? { files: filesToSave } : {}),
+              version: refs.currentDrawingVersion.current ?? undefined,
+            },
+            ...(guestShareId ? [guestShareId] : []),
+          );
           if (!canEditRef.current || !isCurrent()) return;
           if (typeof updated.version === "number") {
             refs.currentDrawingVersion.current = Math.max(
@@ -259,6 +267,7 @@ export const useEditorPersistence = ({
                 elementsToSave,
                 filesToSave,
                 isCurrent,
+                guestShareId,
               );
               if (!reconciled) return;
               await persistScene(
@@ -281,12 +290,31 @@ export const useEditorPersistence = ({
         filesChangedSincePersist,
       );
     } catch (err) {
+      if (
+        guestShareId &&
+        api.isAxiosError(err) &&
+        [401, 403, 404].includes(err.response?.status ?? 0)
+      ) {
+        onGuestAccessEnded?.();
+        throw err;
+      }
       if (err instanceof DrawingSaveConflictError) {
         toast.error("Drawing changed in another tab. Refresh to load latest.");
         throw err;
       }
-      console.error("Failed to save drawing", err);
-      toast.error("Failed to save changes");
+      if (
+        guestShareId &&
+        api.isAxiosError(err) &&
+        err.response?.status === 415
+      ) {
+        toast.error(
+          "Remove unsupported images to save your changes. Guests can add PNG, JPEG, GIF, WebP, AVIF, or BMP images.",
+          { id: "guest-image-format" },
+        );
+      } else {
+        console.error("Failed to save drawing", err);
+        toast.error("Failed to save changes");
+      }
       throw err;
     }
   };
@@ -397,7 +425,11 @@ export const useEditorPersistence = ({
         drawingSessionRef.current !== session
       )
         return;
-      await api.updateDrawing(drawingId, { preview: svg.outerHTML });
+      await api.updateDrawing(
+        drawingId,
+        { preview: svg.outerHTML },
+        ...(guestShareId ? [guestShareId] : []),
+      );
     } catch (err) {
       console.error("Failed to save preview", err);
     }

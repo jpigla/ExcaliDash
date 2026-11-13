@@ -24,22 +24,59 @@ import { useEditorFileUploads } from "./editor/useEditorFileUploads";
 import { useEditorSceneApi } from "./editor/useEditorSceneApi";
 import { useEditorGridStep } from "./editor/useEditorGridStep";
 import { useKeyboardLayoutFix } from "./editor/useKeyboardLayoutFix";
+import { GuestLinkGate } from "./editor/GuestLinkGate";
 import { DEFAULT_GRID_STEP } from "../components/GridStepSelector";
 
 export const Editor: React.FC = () => {
-  const { id } = useParams<{ id: string }>();
+  const { id, shareId } = useParams<{ id: string; shareId: string }>();
+  if (id && shareId) {
+    return (
+      <GuestEditor key={`${id}:${shareId}`} drawingId={id} shareId={shareId} />
+    );
+  }
   // Keep a departing drawing's queue and refs alive for its unmount flush,
   // while the next drawing starts with its own scene, version and permissions.
   return <ExcalidrawEditor key={id} />;
 };
 
-const ExcalidrawEditor: React.FC = () => {
+const GuestEditor = ({
+  drawingId,
+  shareId,
+}: {
+  drawingId: string;
+  shareId: string;
+}) => {
+  const { hash } = useLocation();
+  const token = hash.slice(1);
+  return (
+    <GuestLinkGate
+      key={token}
+      drawingId={drawingId}
+      shareId={shareId}
+      token={token}
+    >
+      {(guestShareId, onGuestAccessEnded) => (
+        <ExcalidrawEditor
+          key={guestShareId}
+          guestShareId={guestShareId}
+          onGuestAccessEnded={onGuestAccessEnded}
+        />
+      )}
+    </GuestLinkGate>
+  );
+};
+
+const ExcalidrawEditor: React.FC<{
+  guestShareId?: string;
+  onGuestAccessEnded?: () => void;
+}> = ({ guestShareId, onGuestAccessEnded }) => {
   useKeyboardLayoutFix();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
   const { theme, toggleTheme } = useTheme();
-  const { user } = useAuth();
+  const { user: signedInUser } = useAuth();
+  const user = guestShareId ? null : signedInUser;
   const [accessLevel, setAccessLevel] = useState<
     "none" | "view" | "edit" | "owner"
   >("none");
@@ -123,14 +160,27 @@ const ExcalidrawEditor: React.FC = () => {
     };
   }, []);
   const handleSocketAccessDenied = useCallback(() => {
+    if (guestShareId) {
+      onGuestAccessEnded?.();
+      return;
+    }
     if (!id || !location.pathname.startsWith("/editor/")) return;
     navigate(`/shared/${id}${location.search}${location.hash}`, {
       replace: true,
     });
-  }, [id, location.hash, location.pathname, location.search, navigate]);
+  }, [
+    guestShareId,
+    id,
+    location.hash,
+    location.pathname,
+    location.search,
+    navigate,
+    onGuestAccessEnded,
+  ]);
   const { peers, socketMeRef, socketRef, isSyncing, onPointerUpdate } =
     useEditorCollaboration({
       drawingId: id,
+      guestShareId,
       me,
       isReady,
       excalidrawAPI,
@@ -144,6 +194,8 @@ const ExcalidrawEditor: React.FC = () => {
     });
   const { scanNow: scanFileUploads } = useEditorFileUploads({
     canEdit,
+    guestShareId,
+    onGuestAccessEnded,
     drawingId: id,
     isReady,
     excalidrawAPI,
@@ -202,6 +254,8 @@ const ExcalidrawEditor: React.FC = () => {
     runHistoryRestore,
   } = useEditorPersistence({
     drawingId: id,
+    guestShareId,
+    onGuestAccessEnded,
     canEdit,
     refs: persistenceRefs,
     user,
@@ -254,6 +308,8 @@ const ExcalidrawEditor: React.FC = () => {
   );
   useEditorSceneLoader({
     id,
+    guestShareId,
+    onGuestAccessEnded,
     user,
     location,
     navigate,
@@ -319,6 +375,7 @@ const ExcalidrawEditor: React.FC = () => {
     handleToggleAutoHide,
   } = useEditorCommands({
     autoHideEnabled,
+    guestShareId,
     canEdit,
     debouncedSaveLibrary,
     drawingId: id,
@@ -341,6 +398,7 @@ const ExcalidrawEditor: React.FC = () => {
     <>
       <EditorView
         id={id}
+        isGuest={Boolean(guestShareId)}
         accessLevel={accessLevel}
         autoHideEnabled={autoHideEnabled}
         autosaveFailing={autosaveFailing}
@@ -384,19 +442,21 @@ const ExcalidrawEditor: React.FC = () => {
         onToggleAutoHide={handleToggleAutoHide}
         onToggleTheme={toggleTheme}
       />
-      <EditorDialogs
-        drawingId={id}
-        historyButtonRef={historyButtonRef}
-        getCurrentVersion={() => currentDrawingVersionRef.current}
-        isHistoryOpen={isHistoryOpen}
-        onPreviewHistory={setHistoryPreview}
-        onRestoreSnapshot={(snapshotId) =>
-          runHistoryRestore(id!, () =>
-            api.restoreDrawingSnapshot(id!, snapshotId),
-          )
-        }
-        onCloseHistory={() => setIsHistoryOpen(false)}
-      />
+      {!guestShareId && (
+        <EditorDialogs
+          drawingId={id}
+          historyButtonRef={historyButtonRef}
+          getCurrentVersion={() => currentDrawingVersionRef.current}
+          isHistoryOpen={isHistoryOpen}
+          onPreviewHistory={setHistoryPreview}
+          onRestoreSnapshot={(snapshotId) =>
+            runHistoryRestore(id!, () =>
+              api.restoreDrawingSnapshot(id!, snapshotId),
+            )
+          }
+          onCloseHistory={() => setIsHistoryOpen(false)}
+        />
+      )}
     </>
   );
 };

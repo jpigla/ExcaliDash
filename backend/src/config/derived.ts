@@ -7,7 +7,6 @@ import { readRaw } from "./env";
 export interface LinkShareConfig {
   editDefaultTtlMs: number;
   viewDefaultTtlMs: number;
-  maxTtlMs: number;
 }
 
 export interface UpdateCheckConfig {
@@ -44,10 +43,6 @@ export const resolveLinkShareConfig = (): LinkShareConfig => ({
   viewDefaultTtlMs: parseLinkShareTtl(
     "LINK_SHARE_VIEW_DEFAULT_TTL_MS",
     30 * 24 * 60 * 60 * 1000,
-  ),
-  maxTtlMs: parseLinkShareTtl(
-    "LINK_SHARE_MAX_TTL_MS",
-    90 * 24 * 60 * 60 * 1000,
   ),
 });
 

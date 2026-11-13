@@ -1,5 +1,6 @@
 import express from "express";
 import { canViewDrawing, getDrawingAccess } from "../../authz/sharing";
+import { guestDrawingResponse } from "./drawingGuestResponse";
 import { toPublicTrashCollectionId } from "./trash";
 import type { DrawingRouteContext } from "./drawingRouteContext";
 
@@ -41,6 +42,30 @@ export const registerDrawingReadRoutes = (
           error: "Drawing not found",
           message: "Drawing does not exist",
         });
+      }
+
+      if (principal?.kind === "guest" && access !== "owner") {
+        res.setHeader("Cache-Control", "no-store");
+        const storedFiles = await prisma.drawingFile.findMany({
+          where: { drawingId: id },
+          select: { fileId: true },
+        });
+        const currentAccess = await getDrawingAccess({
+          prisma,
+          principal,
+          drawingId: id,
+        });
+        if (currentAccess !== "view" && currentAccess !== "edit") {
+          return res.status(404).json({ error: "Drawing not found" });
+        }
+        return res.json(
+          guestDrawingResponse(
+            drawing,
+            currentAccess,
+            parseJsonField,
+            storedFiles,
+          ),
+        );
       }
 
       const isOwner =

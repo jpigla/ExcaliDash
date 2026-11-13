@@ -1,5 +1,8 @@
 import jwt from "jsonwebtoken";
 import { Server } from "socket.io";
+import { getGuestPrincipalFromCookieHeader } from "../authz/guestLinkSecurity";
+import { scopeGuestScene } from "../routes/dashboard/drawingGuestResponse";
+import { createGuestSocketPacketGuard } from "./guestSocketEvents";
 import { PrismaClient } from "../generated/client";
 import { AuthModeService } from "../auth/authMode";
 import { ACCESS_TOKEN_COOKIE_NAME, parseCookieHeader } from "../auth/cookies";
@@ -13,7 +16,6 @@ import {
   removeSocketFromRooms,
   revalidateRoomSockets,
   type PresenceUser,
-  type RevalidatableSocket,
   type SocketState,
 } from "./socketAccess";
 
@@ -22,12 +24,15 @@ type RegisterSocketHandlersDeps = {
   prisma: PrismaClient;
   authModeService: AuthModeService;
   jwtSecret: string;
+  isAllowedOrigin: (origin: string | undefined) => boolean;
 };
 
 export type SocketHandlers = {
   // Re-check access for every socket currently in a drawing's room; used by the
   // sharing routes to kick collaborators the moment their access is revoked.
   revalidateDrawingAccess: (drawingId: string) => Promise<void>;
+  emitDrawingScene: (drawingId: string, payload: unknown) => Promise<void>;
+  emitDrawingServerUpdate: (drawingId: string) => Promise<void>;
 };
 
 export const registerSocketHandlers = ({
@@ -35,6 +40,7 @@ export const registerSocketHandlers = ({
   prisma,
   authModeService,
   jwtSecret,
+  isAllowedOrigin,
 }: RegisterSocketHandlersDeps): SocketHandlers => {
   const roomUsers = new Map<string, PresenceUser[]>();
 
@@ -104,8 +110,136 @@ export const registerSocketHandlers = ({
     }
   };
 
+  const socketsForDrawing = (drawingId: string, guestsOnly: boolean) => {
+    const roomId = `drawing_${drawingId}`;
+    return [...(io.sockets.adapter.rooms.get(roomId) ?? [])]
+      .map((id) => io.sockets.sockets.get(id))
+      .filter(
+        (socket) =>
+          socket &&
+          (!guestsOnly || getState(socket).principal?.kind === "guest"),
+      );
+  };
+
+  const revalidateDrawingAccess = async (
+    drawingId: string,
+    guestsOnly = false,
+  ): Promise<void> => {
+    const sockets = socketsForDrawing(drawingId, guestsOnly);
+    await revalidateRoomSockets({
+      prisma,
+      drawingId,
+      roomUsers,
+      sockets,
+      emitPresence: (rid, users) => io.to(rid).emit("presence-update", users),
+    });
+  };
+
+  const emitDrawingScene = async (
+    drawingId: string,
+    payload: unknown,
+    senderId?: string,
+  ): Promise<void> => {
+    const roomId = `drawing_${drawingId}`;
+    const guests = socketsForDrawing(drawingId, true);
+    const sender = senderId ? io.sockets.sockets.get(senderId) : undefined;
+    const guestSender = sender && getState(sender).principal?.kind === "guest";
+    let guestPayload = payload;
+    if (guests.length && payload && typeof payload === "object") {
+      const scene = payload as {
+        elements?: unknown;
+        files?: Record<string, unknown>;
+        persisted?: boolean;
+      };
+      if (!senderId && scene.persisted === true) {
+        const storedFiles = await prisma.drawingFile.findMany({
+          where: { drawingId },
+          select: { fileId: true },
+        });
+        guestPayload = {
+          ...scene,
+          ...scopeGuestScene(
+            drawingId,
+            scene.elements,
+            scene.files ?? {},
+            storedFiles,
+          ),
+        };
+      } else {
+        const scoped = scopeGuestScene(
+          drawingId,
+          scene.elements,
+          guestSender ? (scene.files ?? {}) : {},
+          [],
+        );
+        guestPayload = { ...scene, ...scoped };
+      }
+    }
+    // Send only to guests in the checked snapshot. A socket joining while the
+    // DB checks are pending receives the saved scene on its next HTTP catchup.
+    await revalidateRoomSockets({
+      prisma,
+      drawingId,
+      roomUsers,
+      sockets: guests,
+      emitPresence: (rid, users) => io.to(rid).emit("presence-update", users),
+    });
+    // A write may be revoked while the recipient checks are in flight.
+    if (guestSender && sender) {
+      const principal = getState(sender).principal;
+      if (
+        !canEditDrawing(
+          await getDrawingAccess({ prisma, principal, drawingId }),
+        )
+      )
+        return;
+    }
+    if (senderId && !io.sockets.sockets.has(senderId)) return;
+    for (const guest of guests) {
+      if (guest.id !== senderId && guest.connected && guest.rooms.has(roomId)) {
+        guest.emit("element-update", guestPayload);
+      }
+    }
+    // Resolve guest membership at emit time so a new join cannot receive
+    // the unscoped account payload containing storage URLs.
+    const exclude = socketsForDrawing(drawingId, true).map(
+      (socket) => socket.id,
+    );
+    if (senderId) exclude.push(senderId);
+    io.to(roomId).except(exclude).emit("element-update", payload);
+  };
+
   io.use(async (socket, next) => {
     try {
+      const state = getState(socket);
+      if (Object.hasOwn(socket.handshake.auth, "guestShareId")) {
+        if (!isAllowedOrigin(socket.handshake.headers.origin)) {
+          return next(new Error("Authentication failed"));
+        }
+        const guest = getGuestPrincipalFromCookieHeader(
+          socket.handshake.headers.cookie,
+          socket.handshake.auth.guestShareId,
+          jwtSecret,
+        );
+        if (
+          !guest ||
+          !canViewDrawing(
+            await getDrawingAccess({
+              prisma,
+              principal: guest,
+              drawingId: guest.drawingId,
+            }),
+          )
+        ) {
+          return next(new Error("GUEST_ACCESS_ENDED"));
+        }
+        state.principal = guest;
+        return next();
+      }
+
+      if (Object.hasOwn(socket.handshake.auth, "guestSession")) {
+        return next(new Error("GUEST_ACCESS_ENDED"));
+      }
       const tokenFromAuth = socket.handshake.auth?.token as string | undefined;
       const tokenFromCookie = (() => {
         const cookies = parseCookieHeader(socket.handshake.headers.cookie);
@@ -115,19 +249,12 @@ export const registerSocketHandlers = ({
           : undefined;
       })();
       const token = tokenFromAuth || tokenFromCookie;
-      const authEnabled = await authModeService.getAuthEnabled();
       const userId = await getSocketAuthUserId(token);
-      const state = getState(socket);
 
       if (userId) {
         state.principal = { kind: "user", userId };
         return next();
       }
-
-      state.principal = null;
-      // Google-Docs-style "anyone with the link": allow anonymous sockets and enforce access on join-room
-      // using getDrawingAccess (which consults active link-share policies).
-      if (authEnabled) return next();
 
       return next(new Error("Authentication required"));
     } catch {
@@ -138,14 +265,46 @@ export const registerSocketHandlers = ({
   io.on("connection", (socket) => {
     const state = getState(socket);
     const principal = state.principal;
+    if (principal?.kind === "guest") {
+      const guard = createGuestSocketPacketGuard(principal.drawingId);
+      socket.use((packet, next) => {
+        const validated = guard(packet);
+        // Dropped packets are not dispatched. A later valid update or the
+        // existing HTTP snapshot path can still synchronize the scene.
+        if (!validated) return;
+        packet.splice(0, packet.length, ...validated);
+        next();
+      });
+    }
     const ACCESS_CACHE_TTL_MS = 1500;
+    let guestExpiryTimer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleGuestExpiry = (expiresAt: number) => {
+      const remaining = expiresAt - Date.now();
+      if (remaining <= 0) {
+        socket.emit("error", {
+          code: "GUEST_ACCESS_ENDED",
+          message: "Your guest access to this drawing has ended",
+        });
+        socket.disconnect(true);
+        return;
+      }
+      // Node timers accept at most 2^31-1 ms; a guest session can last longer.
+      guestExpiryTimer = setTimeout(
+        () => scheduleGuestExpiry(expiresAt),
+        Math.min(remaining, 2_147_483_647),
+      ).unref();
+    };
 
     const getCachedOrFreshAccess = async (
       drawingId: string,
     ): Promise<"view" | "edit" | "owner" | null> => {
       const cached = state.access.get(drawingId);
       const now = Date.now();
-      if (cached && now - cached.checkedAtMs < ACCESS_CACHE_TTL_MS) {
+      if (
+        principal?.kind !== "guest" &&
+        cached &&
+        now - cached.checkedAtMs < ACCESS_CACHE_TTL_MS
+      ) {
         return cached.access;
       }
       const access = await getDrawingAccess({
@@ -179,18 +338,18 @@ export const registerSocketHandlers = ({
     socket.on(
       "join-room",
       async (
-        {
-          drawingId,
-          user,
-        }: {
-          drawingId: string;
-          user: Omit<PresenceUser, "socketId" | "isActive">;
-        },
+        data: {
+          drawingId?: unknown;
+          user?: Partial<PresenceUser>;
+        } | null,
         ack?: (payload: {
           user: Omit<PresenceUser, "socketId" | "isActive">;
         }) => void,
       ) => {
         try {
+          const drawingId = data?.drawingId;
+          if (typeof drawingId !== "string") return;
+          const user = data?.user;
           const access = await getCachedOrFreshAccess(drawingId);
           if (!access) {
             socket.emit("error", {
@@ -200,7 +359,8 @@ export const registerSocketHandlers = ({
           }
 
           const roomId = `drawing_${drawingId}`;
-          socket.join(roomId);
+          if (!socket.connected) return;
+          await socket.join(roomId);
           state.joinedRooms.add(roomId);
 
           let trustedUserId =
@@ -275,12 +435,12 @@ export const registerSocketHandlers = ({
     socket.on("cursor-move", async (data) => {
       const drawingId =
         typeof data?.drawingId === "string" ? data.drawingId : null;
-      if (!drawingId || !state.access.has(drawingId)) {
+      if (!drawingId || !state.joinedRooms.has(`drawing_${drawingId}`)) {
         return;
       }
       // Re-validate through the TTL cache so revoked collaborators stop
       // broadcasting cursors (rather than trusting the stale join-time grant).
-      const access = await getCachedOrFreshAccess(drawingId);
+      const access = await getCachedOrFreshAccess(drawingId).catch(() => null);
       if (!access) {
         dropDrawingAccess(drawingId);
         return;
@@ -302,7 +462,7 @@ export const registerSocketHandlers = ({
     socket.on("element-update", async (data) => {
       const drawingId =
         typeof data?.drawingId === "string" ? data.drawingId : null;
-      if (!drawingId || !state.access.has(drawingId)) {
+      if (!drawingId || !state.joinedRooms.has(`drawing_${drawingId}`)) {
         return;
       }
 
@@ -341,24 +501,37 @@ export const registerSocketHandlers = ({
         return;
       }
 
-      const roomId = `drawing_${drawingId}`;
-      socket.to(roomId).emit("element-update", data);
+      try {
+        await emitDrawingScene(
+          drawingId,
+          {
+            drawingId,
+            elements: data.elements,
+            files: data.files,
+            elementOrder: data.elementOrder,
+          },
+          socket.id,
+        );
+      } catch (error) {
+        console.error("Failed to broadcast drawing update:", error);
+      }
     });
 
     socket.on(
       "user-activity",
-      async ({
-        drawingId,
-        isActive,
-      }: {
-        drawingId: string;
-        isActive: boolean;
-      }) => {
-        if (typeof drawingId !== "string" || !state.access.has(drawingId)) {
+      async (data: { drawingId?: unknown; isActive?: unknown } | null) => {
+        const drawingId = data?.drawingId;
+        const isActive = data?.isActive;
+        if (
+          typeof drawingId !== "string" ||
+          typeof isActive !== "boolean" ||
+          !state.joinedRooms.has(`drawing_${drawingId}`)
+        )
           return;
-        }
         // Re-validate so revoked collaborators stop broadcasting presence.
-        const access = await getCachedOrFreshAccess(drawingId);
+        const access = await getCachedOrFreshAccess(drawingId).catch(
+          () => null,
+        );
         if (!access) {
           dropDrawingAccess(drawingId);
           return;
@@ -376,6 +549,7 @@ export const registerSocketHandlers = ({
     );
 
     socket.on("disconnect", () => {
+      clearTimeout(guestExpiryTimer);
       // Only scan the rooms this socket actually joined instead of every room.
       const changed = removeSocketFromRooms(
         roomUsers,
@@ -388,25 +562,17 @@ export const registerSocketHandlers = ({
       state.joinedRooms.clear();
       state.access.clear();
     });
+    if (principal?.kind === "guest") scheduleGuestExpiry(principal.expiresAt);
   });
 
-  const revalidateDrawingAccess = async (drawingId: string): Promise<void> => {
-    const roomId = `drawing_${drawingId}`;
-    const socketIds = io.sockets.adapter.rooms.get(roomId);
-    if (!socketIds || socketIds.size === 0) return;
-    const sockets: RevalidatableSocket[] = [];
-    for (const socketId of [...socketIds]) {
-      const socket = io.sockets.sockets.get(socketId);
-      if (socket) sockets.push(socket as unknown as RevalidatableSocket);
-    }
-    await revalidateRoomSockets({
-      prisma,
-      drawingId,
-      roomUsers,
-      sockets,
-      emitPresence: (rid, users) => io.to(rid).emit("presence-update", users),
-    });
+  return {
+    revalidateDrawingAccess,
+    emitDrawingScene,
+    emitDrawingServerUpdate: async (drawingId) => {
+      await revalidateDrawingAccess(drawingId, true);
+      io.to(`drawing_${drawingId}`).emit("drawing-server-update", {
+        drawingId,
+      });
+    },
   };
-
-  return { revalidateDrawingAccess };
 };

@@ -76,6 +76,10 @@ test.describe("Dashboard Workflows", () => {
     const cardLocator = await ensureCardVisible(page, createdDrawing.id);
 
     await ensureCardSelected(page, createdDrawing.id);
+    page.once("dialog", async (dialog) => {
+      expect(dialog.message()).toContain("guest links");
+      await dialog.accept();
+    });
     await page.getByTitle("Move to Trash").click();
     await expect(cardLocator).toHaveCount(0);
 
@@ -194,6 +198,10 @@ test.describe("Dashboard Workflows", () => {
     const bulkMoveToTrash = async () => {
       await page.getByTitle("Select All").click();
       await expect(page.getByTitle("Move to Trash")).toBeEnabled();
+      page.once("dialog", async (dialog) => {
+        expect(dialog.message()).toContain("guest links");
+        await dialog.accept();
+      });
       await page.getByTitle("Move to Trash").click();
     };
 

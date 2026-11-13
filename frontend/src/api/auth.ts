@@ -2,8 +2,9 @@ import {
   cachePasswordPolicy,
   type PasswordPolicyResponse,
 } from "../utils/passwordPolicy";
-import { API_URL, api, axios } from "./client";
+import { API_URL, api, axios, isAxiosError } from "./client";
 import type { DrawingSortField, SortDirection } from "./drawings";
+import { GUEST_SHARE_HEADER } from "./guestLinks";
 import { isOidcAutoLoginSuppressed } from "../utils/oidcLogout";
 
 const USER_KEY = "excalidash-user";
@@ -340,6 +341,33 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
+    const isGuestRequest = Boolean(
+      error.config?.headers?.get?.(GUEST_SHARE_HEADER),
+    );
+    const isGuestLinkEndpoint = String(error.config?.url || "").startsWith(
+      "/guest-links/",
+    );
+    const redactGuestError = () => {
+      // Axios errors include request headers and body. Leave those available
+      // for internal CSRF retries, but never expose a guest credential to a
+      // caller's diagnostics or error logger.
+      if ((isGuestRequest || isGuestLinkEndpoint) && isAxiosError(error)) {
+        delete error.config;
+        delete error.request;
+        if (error.response) {
+          const { status, statusText, data } = error.response;
+          error.response = {
+            status,
+            statusText,
+            data,
+            headers: new axios.AxiosHeaders(),
+            config: { headers: new axios.AxiosHeaders() },
+          };
+        }
+      }
+      return Promise.reject(error);
+    };
+
     if (
       error.response?.status === 403 &&
       error.response?.data?.code === "MUST_RESET_PASSWORD"
@@ -358,13 +386,13 @@ api.interceptors.response.use(
     }
 
     if (error.response?.status === 401) {
+      if (isGuestRequest || isGuestLinkEndpoint) return redactGuestError();
       const originalRequest = (error.config || {}) as RetriableRequestConfig;
       const url = String(originalRequest.url || "");
       const isAuthRoute = url.includes("/auth/");
       const isShareFlow = window.location.pathname.startsWith("/shared/");
-      const authEnabled = !isAuthRoute ? await getAuthEnabledStatus() : true;
-
       if (isShareFlow && !isAuthRoute) return Promise.reject(error);
+      const authEnabled = !isAuthRoute ? await getAuthEnabledStatus() : true;
       if (!isAuthRoute && authEnabled === false) {
         if (!originalRequest._authModeRetry) {
           originalRequest._authModeRetry = true;
@@ -407,6 +435,6 @@ api.interceptors.response.use(
         return api(originalRequest as any);
       }
     }
-    return Promise.reject(error);
+    return redactGuestError();
   },
 );

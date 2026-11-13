@@ -71,31 +71,36 @@ export const revalidateRoomSockets = async (params: {
 }): Promise<void> => {
   const { prisma, drawingId, roomUsers, sockets, emitPresence } = params;
   const roomId = `drawing_${drawingId}`;
-  for (const socket of sockets) {
-    // Force a fresh check by dropping any cached grant for this drawing.
-    socket.data.access?.delete(drawingId);
-    const principal = socket.data.principal ?? null;
-    let access: Awaited<ReturnType<typeof getDrawingAccess>> = "none";
-    try {
-      access = await getDrawingAccess({ prisma, principal, drawingId });
-    } catch (error) {
-      console.error("Failed to revalidate drawing socket access:", error);
-    }
-    if (!canViewDrawing(access)) {
-      const changed = removeSocketFromRooms(roomUsers, [roomId], socket.id);
-      for (const changedRoomId of changed) {
-        emitPresence(changedRoomId, roomUsers.get(changedRoomId) ?? []);
+  await Promise.all(
+    sockets.map(async (socket) => {
+      // Force a fresh check by dropping any cached grant for this drawing.
+      socket.data.access?.delete(drawingId);
+      const principal = socket.data.principal ?? null;
+      let access: Awaited<ReturnType<typeof getDrawingAccess>> = "none";
+      try {
+        access = await getDrawingAccess({ prisma, principal, drawingId });
+      } catch (error) {
+        console.error("Failed to revalidate drawing socket access:", error);
       }
-      socket.data.joinedRooms?.delete(roomId);
-      socket.emit("error", {
-        message: "Your access to this drawing was revoked",
-      });
-      socket.disconnect(true);
-    } else {
-      socket.data.access?.set(drawingId, {
-        access: access === "owner" ? "owner" : access,
-        checkedAtMs: Date.now(),
-      });
-    }
-  }
+      if (!canViewDrawing(access)) {
+        const changed = removeSocketFromRooms(roomUsers, [roomId], socket.id);
+        for (const changedRoomId of changed) {
+          emitPresence(changedRoomId, roomUsers.get(changedRoomId) ?? []);
+        }
+        socket.data.joinedRooms?.delete(roomId);
+        socket.emit("error", {
+          ...(principal?.kind === "guest"
+            ? { code: "GUEST_ACCESS_ENDED" }
+            : {}),
+          message: "Your access to this drawing was revoked",
+        });
+        socket.disconnect(true);
+      } else {
+        socket.data.access?.set(drawingId, {
+          access: access === "owner" ? "owner" : access,
+          checkedAtMs: Date.now(),
+        });
+      }
+    }),
+  );
 };

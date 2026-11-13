@@ -45,6 +45,37 @@ const resolveStagedUploadPath = async (
   }
   return candidatePath;
 };
+// Count bytes from the decompressor rather than trusting the ZIP directory.
+const readBoundedZipEntry = (
+  entry: JSZip.JSZipObject,
+  maxBytes: number,
+  limitMessage: string,
+): Promise<Buffer> =>
+  new Promise((resolve, reject) => {
+    const stream = entry.nodeStream();
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    let stopped = false;
+    stream.on("data", (chunk: Buffer) => {
+      if (stopped) return;
+      bytes += chunk.length;
+      if (bytes > maxBytes) {
+        stopped = true;
+        stream.pause();
+        chunks.length = 0;
+        reject(new ImportValidationError(limitMessage));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    stream.once("error", () => {
+      reject(new ImportValidationError(`Invalid ZIP entry: ${entry.name}`));
+    });
+    stream.once("end", () => {
+      if (!stopped) resolve(Buffer.concat(chunks, bytes));
+    });
+  });
+
 export const registerExcalidashImportRoutes = (
   deps: RegisterImportExportDeps,
 ) => {
@@ -91,16 +122,7 @@ export const registerExcalidashImportRoutes = (
       try {
         const buffer = await fsPromises.readFile(stagedPath);
         const zip = await JSZip.loadAsync(buffer);
-        try {
-          assertSafeZipArchive(zip, MAX_IMPORT_ARCHIVE_ENTRIES);
-        } catch (error) {
-          if (error instanceof ImportValidationError) {
-            return res
-              .status(error.status)
-              .json({ error: "Invalid backup", message: error.message });
-          }
-          throw error;
-        }
+        assertSafeZipArchive(zip, MAX_IMPORT_ARCHIVE_ENTRIES);
         const manifestFile = getSafeZipEntry(zip, "excalidash.manifest.json");
         if (!manifestFile) {
           return res.status(400).json({
@@ -108,18 +130,14 @@ export const registerExcalidashImportRoutes = (
             message: "Missing excalidash.manifest.json",
           });
         }
-        const rawManifest = await manifestFile.async("string");
-        if (
-          Buffer.byteLength(rawManifest, "utf8") > MAX_IMPORT_MANIFEST_BYTES
-        ) {
-          return res.status(400).json({
-            error: "Invalid backup manifest",
-            message: "excalidash.manifest.json is too large",
-          });
-        }
+        const rawManifest = await readBoundedZipEntry(
+          manifestFile,
+          MAX_IMPORT_MANIFEST_BYTES,
+          "excalidash.manifest.json is too large",
+        );
         let manifestJson: unknown;
         try {
-          manifestJson = JSON.parse(rawManifest);
+          manifestJson = JSON.parse(rawManifest.toString("utf8"));
         } catch {
           return res.status(400).json({
             error: "Invalid backup manifest",
@@ -189,6 +207,13 @@ export const registerExcalidashImportRoutes = (
           collections: manifest.collections.length,
           drawings: manifest.drawings.length,
         });
+      } catch (error) {
+        if (error instanceof ImportValidationError) {
+          return res
+            .status(error.status)
+            .json({ error: "Invalid backup", message: error.message });
+        }
+        throw error;
       } finally {
         await removeFileIfExists(stagedPath);
       }
@@ -218,16 +243,7 @@ export const registerExcalidashImportRoutes = (
       try {
         const buffer = await fsPromises.readFile(stagedPath);
         const zip = await JSZip.loadAsync(buffer);
-        try {
-          assertSafeZipArchive(zip, MAX_IMPORT_ARCHIVE_ENTRIES);
-        } catch (error) {
-          if (error instanceof ImportValidationError) {
-            return res
-              .status(error.status)
-              .json({ error: "Invalid backup", message: error.message });
-          }
-          throw error;
-        }
+        assertSafeZipArchive(zip, MAX_IMPORT_ARCHIVE_ENTRIES);
         const manifestFile = getSafeZipEntry(zip, "excalidash.manifest.json");
         if (!manifestFile) {
           return res.status(400).json({
@@ -235,18 +251,14 @@ export const registerExcalidashImportRoutes = (
             message: "Missing excalidash.manifest.json",
           });
         }
-        const rawManifest = await manifestFile.async("string");
-        if (
-          Buffer.byteLength(rawManifest, "utf8") > MAX_IMPORT_MANIFEST_BYTES
-        ) {
-          return res.status(400).json({
-            error: "Invalid backup manifest",
-            message: "excalidash.manifest.json is too large",
-          });
-        }
+        const rawManifest = await readBoundedZipEntry(
+          manifestFile,
+          MAX_IMPORT_MANIFEST_BYTES,
+          "excalidash.manifest.json is too large",
+        );
         let manifestJson: unknown;
         try {
-          manifestJson = JSON.parse(rawManifest);
+          manifestJson = JSON.parse(rawManifest.toString("utf8"));
         } catch {
           return res.status(400).json({
             error: "Invalid backup manifest",
@@ -308,65 +320,52 @@ export const registerExcalidashImportRoutes = (
           sanitized: ReturnType<typeof sanitizeDrawingData> | null;
         };
         const preparedDrawings: PreparedImportDrawing[] = [];
-        let extractedBytes = Buffer.byteLength(rawManifest, "utf8");
-        try {
-          for (const d of manifest.drawings) {
-            const entry = getSafeZipEntry(zip, d.filePath);
-            if (!entry)
-              throw new ImportValidationError(
-                `Missing drawing file: ${d.filePath}`,
-              );
-            const raw = await entry.async("string");
-            const rawSize = Buffer.byteLength(raw, "utf8");
-            if (rawSize > MAX_IMPORT_DRAWING_BYTES) {
-              throw new ImportValidationError(
-                `Drawing is too large: ${d.filePath}`,
-              );
-            }
-            extractedBytes += rawSize;
-            if (extractedBytes > MAX_IMPORT_TOTAL_EXTRACTED_BYTES) {
-              throw new ImportValidationError(
-                "Backup contents exceed maximum import size",
-              );
-            }
-            let parsedJson: any;
-            try {
-              parsedJson = JSON.parse(raw) as any;
-            } catch {
-              throw new ImportValidationError(
-                `Drawing JSON is invalid: ${d.filePath}`,
-              );
-            }
-            const imported = {
-              name: d.name,
-              elements: parsedJson?.elements,
-              appState:
-                parsedJson?.appState === undefined ? {} : parsedJson.appState,
-              files: parsedJson?.files === undefined ? {} : parsedJson.files,
-              preview: null as string | null,
-              collectionId: d.collectionId,
-            };
-            assertImportedScene(imported);
-            if (!validateImportedDrawing(imported)) {
-              throw new ImportValidationError(
-                `Drawing failed validation: ${d.filePath}`,
-              );
-            }
-            preparedDrawings.push({
-              id: d.id,
-              name: sanitizeText(imported.name, 255) || "Untitled Drawing",
-              version: typeof d.version === "number" ? d.version : undefined,
-              collectionId: d.collectionId,
-              sanitized: sanitizeDrawingData(imported),
-            });
+        let extractedBytes = rawManifest.length;
+        for (const d of manifest.drawings) {
+          const entry = getSafeZipEntry(zip, d.filePath);
+          if (!entry)
+            throw new ImportValidationError(
+              `Missing drawing file: ${d.filePath}`,
+            );
+          const remaining = MAX_IMPORT_TOTAL_EXTRACTED_BYTES - extractedBytes;
+          const raw = await readBoundedZipEntry(
+            entry,
+            Math.min(MAX_IMPORT_DRAWING_BYTES, remaining),
+            remaining < MAX_IMPORT_DRAWING_BYTES
+              ? "Backup contents exceed maximum import size"
+              : `Drawing is too large: ${d.filePath}`,
+          );
+          extractedBytes += raw.length;
+          let parsedJson: any;
+          try {
+            parsedJson = JSON.parse(raw.toString("utf8")) as any;
+          } catch {
+            throw new ImportValidationError(
+              `Drawing JSON is invalid: ${d.filePath}`,
+            );
           }
-        } catch (error) {
-          if (error instanceof ImportValidationError) {
-            return res
-              .status(error.status)
-              .json({ error: "Invalid backup", message: error.message });
+          const imported = {
+            name: d.name,
+            elements: parsedJson?.elements,
+            appState:
+              parsedJson?.appState === undefined ? {} : parsedJson.appState,
+            files: parsedJson?.files === undefined ? {} : parsedJson.files,
+            preview: null as string | null,
+            collectionId: d.collectionId,
+          };
+          assertImportedScene(imported);
+          if (!validateImportedDrawing(imported)) {
+            throw new ImportValidationError(
+              `Drawing failed validation: ${d.filePath}`,
+            );
           }
-          throw error;
+          preparedDrawings.push({
+            id: d.id,
+            name: sanitizeText(imported.name, 255) || "Untitled Drawing",
+            version: typeof d.version === "number" ? d.version : undefined,
+            collectionId: d.collectionId,
+            sanitized: sanitizeDrawingData(imported),
+          });
         }
         const knownFileIdsBeforeImport = new Map<number, Set<string>>();
         const finalDrawingIdMap = new Map<number, string>();
@@ -581,6 +580,13 @@ export const registerExcalidashImportRoutes = (
           }
           throw error;
         }
+      } catch (error) {
+        if (error instanceof ImportValidationError) {
+          return res
+            .status(error.status)
+            .json({ error: "Invalid backup", message: error.message });
+        }
+        throw error;
       } finally {
         await removeFileIfExists(stagedPath);
       }

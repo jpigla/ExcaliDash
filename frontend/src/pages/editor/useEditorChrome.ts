@@ -30,30 +30,32 @@ export const useEditorChrome = ({
     }
 
     let hideTimeout: ReturnType<typeof setTimeout> | null = null;
-    let isInTriggerZone = false;
+    let isInHeader = false;
+    const scheduleHide = () => {
+      if (hideTimeout !== null) clearTimeout(hideTimeout);
+      hideTimeout = setTimeout(() => {
+        setIsHeaderVisible(false);
+        hideTimeout = null;
+      }, 2000);
+    };
 
-    const handleMouseMove = throttle((e: MouseEvent) => {
-      const wasInTriggerZone = isInTriggerZone;
-      isInTriggerZone = e.clientY < 5;
-
-      if (isInTriggerZone) {
-        setIsHeaderVisible(true);
-        if (hideTimeout !== null) {
-          clearTimeout(hideTimeout);
-          hideTimeout = null;
-        }
-      } else if (wasInTriggerZone) {
+    const handleMouseMove = throttle((event: MouseEvent) => {
+      if (event.clientY < 5) setIsHeaderVisible(true);
+      const isOverHeader =
+        event.target instanceof Element &&
+        event.target.closest("[data-editor-header]") !== null;
+      const keepVisible = event.clientY < 5 || isOverHeader;
+      if (keepVisible) {
         if (hideTimeout !== null) clearTimeout(hideTimeout);
-        hideTimeout = setTimeout(() => {
-          setIsHeaderVisible(false);
-        }, 2000);
+        hideTimeout = null;
+      } else if (isInHeader) {
+        scheduleHide();
       }
+      isInHeader = keepVisible;
     }, 100);
 
     setIsHeaderVisible(true);
-    hideTimeout = setTimeout(() => {
-      setIsHeaderVisible(false);
-    }, 3000);
+    scheduleHide();
 
     window.addEventListener("mousemove", handleMouseMove, { passive: true });
 

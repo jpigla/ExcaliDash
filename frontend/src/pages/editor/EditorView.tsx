@@ -161,6 +161,7 @@ export const EditorView: React.FC<EditorViewProps> = ({
     }}
   >
     <header
+      data-editor-header
       className={clsx(
         "h-16 bg-white dark:bg-neutral-900 border-b border-gray-200 dark:border-neutral-800 flex items-center px-4 justify-between z-10 fixed top-0 left-0 right-0 transition-all duration-300",
         isHeaderVisible || isShareOpen ? "translate-y-0" : "-translate-y-full",
@@ -243,6 +244,7 @@ export const EditorView: React.FC<EditorViewProps> = ({
         <button
           onClick={onToggleAutoHide}
           className="ui-toolbar-button"
+          aria-pressed={autoHideEnabled}
           title={autoHideEnabled ? "Disable auto-hide" : "Enable auto-hide"}
         >
           {autoHideEnabled ? (

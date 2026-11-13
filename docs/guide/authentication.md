@@ -74,6 +74,8 @@ The administrator must enable password reset and configure email delivery. See t
 Notes:
 `OIDC_JIT_PROVISIONING=true` creates accounts on first sign-in. `OIDC_FIRST_USER_ADMIN=true` grants administrator access to the first provisioned OIDC user. Both default to `true`.
 
+When `OIDC_ADMIN_GROUPS` is set, ExcaliDash updates the stored role at each OIDC sign-in using the groups in the verified ID token. OIDC sessions in this mode require another provider sign-in when the access token expires. If you need to remove access immediately, deactivate the account in ExcaliDash. In hybrid mode, local sign-in follows the role currently stored in ExcaliDash.
+
 To require provider sign-in, set `AUTH_MODE` to `oidc_enforced`.
 
 ## Troubleshoot provider sign-in

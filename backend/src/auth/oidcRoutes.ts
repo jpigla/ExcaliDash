@@ -28,7 +28,6 @@ export type RegisterOidcRoutesDeps = {
     options?: {
       impersonatorId?: string;
       authProvider?: "local" | "oidc";
-      oidcGroups?: string[];
     },
   ) => { accessToken: string; refreshToken: string };
   setAuthCookies: (

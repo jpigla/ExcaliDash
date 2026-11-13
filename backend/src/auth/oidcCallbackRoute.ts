@@ -221,7 +221,7 @@ export const registerOidcCallbackRoute = (
       const oidcGroups = Array.from(
         new Set(
           normalizeClaimGroups(
-            readClaimByPath(claims, config.oidc.groupsClaim),
+            readClaimByPath(idTokenClaims, config.oidc.groupsClaim),
           ),
         ),
       );
@@ -229,6 +229,17 @@ export const registerOidcCallbackRoute = (
       const shouldBeAdmin =
         adminGroups.size > 0 &&
         oidcGroups.some((group) => adminGroups.has(group));
+      const reconcileRole = (tx: Prisma.TransactionClient, user: OidcUser) => {
+        const role = shouldBeAdmin ? "ADMIN" : "USER";
+        if (adminGroups.size === 0 || !user.isActive || user.role === role) {
+          return user;
+        }
+        return tx.user.update({
+          where: { id: user.id },
+          data: { role },
+          select: userSelect,
+        });
+      };
       const user = await prisma.$transaction(async (tx) => {
         const linkedIdentity = await tx.authIdentity.findUnique({
           where: { issuer_subject: { issuer, subject } },
@@ -239,7 +250,7 @@ export const registerOidcCallbackRoute = (
             where: { id: linkedIdentity.id },
             data: { lastLoginAt: new Date(), emailAtLink: normalizedEmail },
           });
-          return linkedIdentity.user;
+          return reconcileRole(tx, linkedIdentity.user);
         }
         const existingUser = await tx.user.findUnique({
           where: { email: normalizedEmail },
@@ -311,17 +322,7 @@ export const registerOidcCallbackRoute = (
             },
           });
         }
-        if (adminGroups.size > 0) {
-          const nextRole = shouldBeAdmin ? "ADMIN" : "USER";
-          if (resolvedUser.role !== nextRole) {
-            resolvedUser = await tx.user.update({
-              where: { id: resolvedUser.id },
-              data: { role: nextRole },
-              select: userSelect,
-            });
-          }
-        }
-        return resolvedUser;
+        return reconcileRole(tx, resolvedUser);
       });
       if (!user.isActive) {
         return redirectToLoginWithError(
@@ -334,7 +335,7 @@ export const registerOidcCallbackRoute = (
       const { accessToken, refreshToken } = generateTokens(
         user.id,
         user.email,
-        { authProvider: "oidc", oidcGroups },
+        { authProvider: "oidc" },
       );
       setAuthCookies(req, res, { accessToken, refreshToken });
       if (config.enableRefreshTokenRotation) {

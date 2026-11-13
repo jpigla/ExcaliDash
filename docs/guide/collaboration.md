@@ -35,6 +35,8 @@ Open **Share** on a drawing to create a guest link. A drawing can have several l
 
 You can copy, edit, or revoke each active link from the share dialog. Share a protected link's password separately. The browser remembers a successful unlock in an HttpOnly cookie for up to 30 days or until the link expires. Hosted deployments require HTTPS for guest sessions. Changing its password, permissions, or expiration ends active guest sessions for that link. Moving the drawing to Trash revokes all its guest links permanently.
 
+Board owners can reveal a guest link password on demand in the share dialog. Passwords set before this feature only have a verification hash. They continue to work, and setting the password again makes it available to reveal without changing the URL. It ends existing guest sessions for that link.
+
 On upgrade from versions that used the drawing ID as a public link, those public links are revoked. Open each drawing's share dialog to create replacement guest links. Existing account and collection permissions still apply.
 
 Keep the configured JWT secret stable across restarts and back it up separately from the database. The server derives a key from it to recover the share URLs for owners. Rotating that secret invalidates guest sessions and makes previous URLs unavailable to copy. Recreate affected links after rotation.

@@ -2,6 +2,8 @@ import express from "express";
 import { z } from "zod";
 import {
   decryptGuestLinkToken,
+  decryptGuestPassphrase,
+  encryptGuestPassphrase,
   encryptGuestLinkToken,
   hashGuestPassphrase,
   isValidGuestPassphrase,
@@ -364,6 +366,44 @@ export const registerDrawingSharingRoutes = (
     }),
   );
 
+  app.get(
+    "/drawings/:id/link-shares/:shareId/passphrase",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      res.set("Cache-Control", "no-store");
+      const userId = req.user?.id;
+      if (!userId || req.user?.authCredentialType !== "jwt") {
+        return res
+          .status(401)
+          .json({ error: "Account authentication required" });
+      }
+      const { id, shareId } = req.params;
+      const share = await prisma.drawingLinkShare.findFirst({
+        where: {
+          id: shareId,
+          drawingId: id,
+          drawing: { userId },
+          revokedAt: null,
+          passphraseHash: { not: null },
+        },
+        select: { encryptedPassphrase: true },
+      });
+      if (!share) return res.status(404).json({ error: "Link not found" });
+      let passphrase: string | null = null;
+      if (share.encryptedPassphrase) {
+        try {
+          passphrase = decryptGuestPassphrase(
+            share.encryptedPassphrase,
+            appConfig.jwtSecret,
+          );
+        } catch {
+          // An unavailable key must not interfere with guest verification.
+        }
+      }
+      return res.json({ passphrase });
+    }),
+  );
+
   app.post(
     "/drawings/:id/link-shares",
     requireAuth,
@@ -397,6 +437,9 @@ export const registerDrawingSharingRoutes = (
             tokenHash: hashShareLinkToken(token),
             encryptedToken: encryptGuestLinkToken(token, appConfig.jwtSecret),
             passphraseHash,
+            encryptedPassphrase: passphrase
+              ? encryptGuestPassphrase(passphrase, appConfig.jwtSecret)
+              : null,
             expiresAt:
               expiresAt === undefined
                 ? new Date(Date.now() + resolveDefaultTtlMs(permission))
@@ -476,6 +519,10 @@ export const registerDrawingSharingRoutes = (
             expiresAt:
               typeof expiresAt === "string" ? new Date(expiresAt) : expiresAt,
             passphraseHash,
+            encryptedPassphrase:
+              typeof passphrase === "string"
+                ? encryptGuestPassphrase(passphrase, appConfig.jwtSecret)
+                : passphrase,
             ...(accessChanged
               ? {
                   revision: { increment: 1 },
@@ -523,7 +570,11 @@ export const registerDrawingSharingRoutes = (
             revokedAt: null,
             drawing: { userId },
           },
-          data: { revokedAt: new Date(), revision: { increment: 1 } },
+          data: {
+            revokedAt: new Date(),
+            revision: { increment: 1 },
+            encryptedPassphrase: null,
+          },
         });
         return revoked.count > 0;
       });

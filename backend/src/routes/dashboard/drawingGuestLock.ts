@@ -19,6 +19,10 @@ export const revokeAllDrawingGuestLinks = async (
 ): Promise<void> => {
   await tx.drawingLinkShare.updateMany({
     where: { drawingId, revokedAt: null },
-    data: { revokedAt: new Date(), revision: { increment: 1 } },
+    data: {
+      revokedAt: new Date(),
+      revision: { increment: 1 },
+      encryptedPassphrase: null,
+    },
   });
 };

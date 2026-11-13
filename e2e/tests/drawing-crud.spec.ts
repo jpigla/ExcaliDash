@@ -106,6 +106,13 @@ test.describe("Drawing Creation", () => {
     await page.waitForTimeout(3500);
     await expect(page.getByText(drawingName)).toBeInViewport();
     await expect(page.getByTitle("Enable auto-hide")).toBeInViewport();
+    await page.getByTitle("Enable auto-hide").click();
+    await page.mouse.move(500, 300);
+    await expect(page.getByText(drawingName)).not.toBeInViewport();
+    await page.mouse.move(500, 2);
+    await expect(page.getByText(drawingName)).toBeInViewport();
+    await page.getByTitle("Disable auto-hide").click();
+    await expect(page.getByTitle("Enable auto-hide")).toBeInViewport();
   });
 
   test("should rename drawing via editor header", async ({ page, request }) => {

@@ -539,6 +539,14 @@ test("the share dialog creates and lists independent guest links", async ({
     await expect(
       page.getByRole("button", { name: "Copy link", exact: true }),
     ).toHaveCount(2);
+    const saved = page.getByRole("textbox", {
+      name: "Saved guest link password",
+    });
+    await expect(saved).toHaveCount(0);
+    await page.getByRole("button", { name: "Show saved password" }).click();
+    await expect(saved).toHaveValue("Workshop-password");
+    await page.getByRole("button", { name: "Hide saved password" }).click();
+    await expect(saved).toHaveCount(0);
   } finally {
     await deleteDrawing(page.request, drawing.id);
   }

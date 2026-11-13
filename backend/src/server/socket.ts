@@ -1,8 +1,8 @@
 import jwt from "jsonwebtoken";
 import { Server } from "socket.io";
-import { readGuestSession } from "../authz/guestLinkSecurity";
-import { scopeGuestDrawingFiles } from "../routes/dashboard/drawingGuestResponse";
-import { isInlineGuestImage } from "../fileProcessing";
+import { getGuestPrincipalFromCookieHeader } from "../authz/guestLinkSecurity";
+import { scopeGuestScene } from "../routes/dashboard/drawingGuestResponse";
+import { createGuestSocketPacketGuard } from "./guestSocketEvents";
 import { PrismaClient } from "../generated/client";
 import { AuthModeService } from "../auth/authMode";
 import { ACCESS_TOKEN_COOKIE_NAME, parseCookieHeader } from "../auth/cookies";
@@ -24,6 +24,7 @@ type RegisterSocketHandlersDeps = {
   prisma: PrismaClient;
   authModeService: AuthModeService;
   jwtSecret: string;
+  isAllowedOrigin: (origin: string | undefined) => boolean;
 };
 
 export type SocketHandlers = {
@@ -39,6 +40,7 @@ export const registerSocketHandlers = ({
   prisma,
   authModeService,
   jwtSecret,
+  isAllowedOrigin,
 }: RegisterSocketHandlersDeps): SocketHandlers => {
   const roomUsers = new Map<string, PresenceUser[]>();
 
@@ -143,36 +145,34 @@ export const registerSocketHandlers = ({
     const sender = senderId ? io.sockets.sockets.get(senderId) : undefined;
     const guestSender = sender && getState(sender).principal?.kind === "guest";
     let guestPayload = payload;
-    if (
-      (guests.length || guestSender) &&
-      payload &&
-      typeof payload === "object" &&
-      "files" in payload &&
-      payload.files &&
-      typeof payload.files === "object" &&
-      !Array.isArray(payload.files)
-    ) {
-      const files = payload.files as Record<string, unknown>;
-      if (Object.keys(files).length > 0) {
+    if (guests.length && payload && typeof payload === "object") {
+      const scene = payload as {
+        elements?: unknown;
+        files?: Record<string, unknown>;
+        persisted?: boolean;
+      };
+      if (!senderId && scene.persisted === true) {
         const storedFiles = await prisma.drawingFile.findMany({
           where: { drawingId },
           select: { fileId: true },
         });
-        const scopedFiles = scopeGuestDrawingFiles(
+        guestPayload = {
+          ...scene,
+          ...scopeGuestScene(
+            drawingId,
+            scene.elements,
+            scene.files ?? {},
+            storedFiles,
+          ),
+        };
+      } else {
+        const scoped = scopeGuestScene(
           drawingId,
-          files,
-          storedFiles,
+          scene.elements,
+          guestSender ? (scene.files ?? {}) : {},
+          [],
         );
-        if (guestSender) {
-          const knownFiles = new Set(storedFiles.map((file) => file.fileId));
-          for (const [fileId, file] of Object.entries(scopedFiles)) {
-            const dataURL = (file as { dataURL?: unknown } | null)?.dataURL;
-            if (!knownFiles.has(fileId) && !isInlineGuestImage(dataURL)) {
-              delete scopedFiles[fileId];
-            }
-          }
-        }
-        guestPayload = { ...payload, files: scopedFiles };
+        guestPayload = { ...scene, ...scoped };
       }
     }
     // Send only to guests in the checked snapshot. A socket joining while the
@@ -206,17 +206,19 @@ export const registerSocketHandlers = ({
       (socket) => socket.id,
     );
     if (senderId) exclude.push(senderId);
-    io.to(roomId)
-      .except(exclude)
-      .emit("element-update", guestSender ? guestPayload : payload);
+    io.to(roomId).except(exclude).emit("element-update", payload);
   };
 
   io.use(async (socket, next) => {
     try {
       const state = getState(socket);
-      if (Object.hasOwn(socket.handshake.auth, "guestSession")) {
-        const guest = readGuestSession(
-          socket.handshake.auth.guestSession,
+      if (Object.hasOwn(socket.handshake.auth, "guestShareId")) {
+        if (!isAllowedOrigin(socket.handshake.headers.origin)) {
+          return next(new Error("Authentication failed"));
+        }
+        const guest = getGuestPrincipalFromCookieHeader(
+          socket.handshake.headers.cookie,
+          socket.handshake.auth.guestShareId,
           jwtSecret,
         );
         if (
@@ -235,6 +237,9 @@ export const registerSocketHandlers = ({
         return next();
       }
 
+      if (Object.hasOwn(socket.handshake.auth, "guestSession")) {
+        return next(new Error("GUEST_ACCESS_ENDED"));
+      }
       const tokenFromAuth = socket.handshake.auth?.token as string | undefined;
       const tokenFromCookie = (() => {
         const cookies = parseCookieHeader(socket.handshake.headers.cookie);
@@ -260,6 +265,17 @@ export const registerSocketHandlers = ({
   io.on("connection", (socket) => {
     const state = getState(socket);
     const principal = state.principal;
+    if (principal?.kind === "guest") {
+      const guard = createGuestSocketPacketGuard(principal.drawingId);
+      socket.use((packet, next) => {
+        const validated = guard(packet);
+        // Dropped packets are not dispatched. A later valid update or the
+        // existing HTTP snapshot path can still synchronize the scene.
+        if (!validated) return;
+        packet.splice(0, packet.length, ...validated);
+        next();
+      });
+    }
     const ACCESS_CACHE_TTL_MS = 1500;
     let guestExpiryTimer: ReturnType<typeof setTimeout> | undefined;
     const scheduleGuestExpiry = (expiresAt: number) => {

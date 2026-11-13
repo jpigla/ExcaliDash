@@ -7,7 +7,11 @@ import {
   filesNeedRehydration,
   rehydrateFilesFromUrls,
 } from "../../utils/rehydrateFiles";
-import { buildRemoteSceneUpdate } from "./shared";
+import {
+  buildRemoteSceneUpdate,
+  expandGuestElementTombstone,
+  isInlineImageFile,
+} from "./shared";
 import * as api from "../../api";
 import { reconcileElements } from "../../utils/sync";
 
@@ -17,7 +21,7 @@ interface Peer extends UserIdentity {
 
 type UseEditorCollaborationInput = {
   drawingId?: string;
-  guestSession?: string;
+  guestShareId?: string;
   me: UserIdentity;
   isReady: boolean;
   excalidrawAPI: MutableRefObject<any>;
@@ -57,7 +61,7 @@ export const bindRoomJoin = (
 
 export const useEditorCollaboration = ({
   drawingId,
-  guestSession,
+  guestShareId,
   me,
   isReady,
   excalidrawAPI,
@@ -101,7 +105,7 @@ export const useEditorCollaboration = ({
       path: "/socket.io",
       transports: ["websocket", "polling"],
       withCredentials: true,
-      ...(guestSession && { auth: { guestSession } }),
+      ...(guestShareId && { auth: { guestShareId } }),
     });
     socketRef.current = socket;
     if (import.meta.env.DEV) {
@@ -164,7 +168,7 @@ export const useEditorCollaboration = ({
     socket.on("error", (payload: any) => {
       const message =
         typeof payload?.message === "string" ? payload.message : null;
-      if (guestSession && payload?.code === "GUEST_ACCESS_ENDED") {
+      if (guestShareId && payload?.code === "GUEST_ACCESS_ENDED") {
         onAccessDenied();
         return;
       }
@@ -176,7 +180,7 @@ export const useEditorCollaboration = ({
       if (message) toast.error(message);
     });
     socket.on("connect_error", (error) => {
-      if (guestSession && error.message === "GUEST_ACCESS_ENDED")
+      if (guestShareId && error.message === "GUEST_ACCESS_ENDED")
         onAccessDenied();
     });
     socket.on("cursor-move", (data: any) => {
@@ -279,18 +283,24 @@ export const useEditorCollaboration = ({
     const stageElements = (elements: unknown, fromSnapshot = false) => {
       if (cancelled || !Array.isArray(elements)) return;
       const editor = excalidrawAPI.current;
-      const liveById = fromSnapshot
-        ? new Map(
-            (
-              editor?.getSceneElementsIncludingDeleted?.() ??
-              latestElementsRef.current
-            ).map((el: any) => [el.id, el]),
-          )
-        : null;
-      for (const el of elements) {
-        const id = el?.id;
+      const liveById =
+        fromSnapshot || guestShareId
+          ? new Map(
+              (
+                editor?.getSceneElementsIncludingDeleted?.() ??
+                latestElementsRef.current
+              ).map((el: any) => [el.id, el]),
+            )
+          : null;
+      for (const incoming of elements) {
+        const id = incoming?.id;
         if (typeof id !== "string" || id.length === 0) continue;
         const live = liveById?.get(id);
+        const previous = pendingRemoteElementsRef.current.get(id);
+        const el = guestShareId
+          ? expandGuestElementTombstone(incoming, previous ?? live)
+          : incoming;
+        if (!el) continue;
         if (
           live &&
           reconcileElements([live], [el], editor?.getAppState?.(), true)[0] !==
@@ -298,7 +308,6 @@ export const useEditorCollaboration = ({
         ) {
           continue;
         }
-        const previous = pendingRemoteElementsRef.current.get(id);
         // A live packet may still be queued for this frame. Give it the same
         // protection from an older HTTP snapshot as an already-painted edit.
         const [next] = previous
@@ -318,7 +327,10 @@ export const useEditorCollaboration = ({
         if (cancelled) return;
         for (const [id, file] of Object.entries(incoming)) {
           // A newer inline packet can arrive while earlier refs are fetching.
-          if (fileReceipts.get(id) === receipt) {
+          if (
+            fileReceipts.get(id) === receipt &&
+            (!guestShareId || isInlineImageFile(file))
+          ) {
             pendingRemoteFilesRef.current[id] = file;
           }
         }
@@ -347,7 +359,7 @@ export const useEditorCollaboration = ({
       if (filesNeedRehydration(incomingFiles)) {
         void rehydrateFilesFromUrls(
           incomingFiles,
-          ...(guestSession ? [{ drawingId, guestSession }] : []),
+          ...(guestShareId ? [{ drawingId, guestShareId }] : []),
         ).then(stage);
       } else {
         stage(incomingFiles);
@@ -386,7 +398,7 @@ export const useEditorCollaboration = ({
         // after reconnect recovers edits missed while the socket was offline.
         const remote = await api.getDrawing(
           drawingId,
-          ...(guestSession ? [guestSession] : []),
+          ...(guestShareId ? [guestShareId] : []),
         );
         if (cancelled || generation !== catchupGeneration) return;
         stageElements(remote.elements, true);
@@ -484,7 +496,7 @@ export const useEditorCollaboration = ({
     };
   }, [
     drawingId,
-    guestSession,
+    guestShareId,
     me,
     isReady,
     excalidrawAPI,

@@ -1,7 +1,7 @@
 import type { Drawing, DrawingSummary } from "../types";
 import { normalizePreviewSvg } from "../utils/previewSvg";
 import { api, isAxiosError } from "./client";
-import { guestAuthorization } from "./guestLinks";
+import { guestShareHeaders } from "./guestLinks";
 
 // Per-file image upload capability. The endpoint below is served by newer
 // backends only; against an older server the route 404s (or 501s). The first
@@ -29,9 +29,9 @@ export const uploadDrawingFile = async (
   fileId: string,
   body: ArrayBuffer | Uint8Array | Blob,
   mimeType: string,
-  guestSession?: string,
+  guestShareId?: string,
 ): Promise<UploadedFileRef | null> => {
-  if (!fileUploadSupported && !guestSession) return null;
+  if (!fileUploadSupported && !guestShareId) return null;
   try {
     const response = await api.put<{ url?: string }>(
       `/drawings/${drawingId}/files/${fileId}`,
@@ -39,7 +39,7 @@ export const uploadDrawingFile = async (
       {
         headers: {
           "Content-Type": mimeType || "application/octet-stream",
-          ...guestAuthorization(guestSession),
+          ...guestShareHeaders(guestShareId),
         },
       },
     );
@@ -50,7 +50,7 @@ export const uploadDrawingFile = async (
     return { url };
   } catch (err) {
     if (
-      !guestSession &&
+      !guestShareId &&
       isAxiosError(err) &&
       (err.response?.status === 404 || err.response?.status === 501)
     ) {
@@ -196,9 +196,9 @@ export async function getSharedDrawings(
   };
 }
 
-export const getDrawing = async (id: string, guestSession?: string) => {
+export const getDrawing = async (id: string, guestShareId?: string) => {
   const response = await api.get<Drawing>(`/drawings/${id}`, {
-    headers: guestAuthorization(guestSession),
+    headers: guestShareHeaders(guestShareId),
   });
   return deserializeDrawing(response.data);
 };
@@ -355,10 +355,10 @@ export const createDrawing = async (
 export const updateDrawing = async (
   id: string,
   data: Partial<Drawing>,
-  guestSession?: string,
+  guestShareId?: string,
 ) => {
   const response = await api.put<Drawing>(`/drawings/${id}`, data, {
-    headers: guestAuthorization(guestSession),
+    headers: guestShareHeaders(guestShareId),
   });
   return deserializeDrawing(response.data);
 };

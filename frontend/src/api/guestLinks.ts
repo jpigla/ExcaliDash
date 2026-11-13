@@ -1,14 +1,25 @@
 import { api } from "./client";
 
 export type GuestLinkSession = {
-  session: string;
   expiresAt: string;
   permission: "view" | "edit";
   drawingId: string;
 };
 
-export const guestAuthorization = (session?: string) =>
-  session ? { Authorization: `Guest ${session}` } : undefined;
+export const GUEST_SHARE_HEADER = "X-Guest-Share";
+
+export const guestShareHeaders = (shareId?: string) =>
+  shareId ? { [GUEST_SHARE_HEADER]: shareId } : undefined;
+
+export const getGuestLinkSession = async (
+  shareId: string,
+): Promise<GuestLinkSession> => {
+  const response = await api.get<GuestLinkSession>(
+    `/guest-links/${encodeURIComponent(shareId)}/session`,
+    { headers: guestShareHeaders(shareId) },
+  );
+  return response.data;
+};
 
 export const unlockGuestLink = async (
   shareId: string,
@@ -18,6 +29,7 @@ export const unlockGuestLink = async (
   const response = await api.post<GuestLinkSession>(
     `/guest-links/${encodeURIComponent(shareId)}/unlock`,
     { token, passphrase },
+    { headers: guestShareHeaders(shareId) },
   );
   return response.data;
 };

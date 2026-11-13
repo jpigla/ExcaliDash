@@ -2,7 +2,10 @@ import express from "express";
 import type { Server as SocketIoServer } from "socket.io";
 import { z } from "zod";
 import { Prisma, PrismaClient } from "../../generated/client";
-import type { DrawingFilePersist } from "../../fileProcessing";
+import type {
+  AdmitDrawingFileUpload,
+  DrawingFilePersist,
+} from "../../fileProcessing";
 
 export type SortField = "name" | "createdAt" | "updatedAt";
 export type SortDirection = "asc" | "desc";
@@ -71,6 +74,7 @@ export type DashboardRouteDeps = {
     userId: string,
     drawingId: string,
     persist?: DrawingFilePersist,
+    admitUpload?: AdmitDrawingFileUpload,
   ) => Promise<Record<string, any>>;
   // Re-check every socket in a drawing's room against current access policy and
   // disconnect collaborators whose access was just revoked. Optional so route

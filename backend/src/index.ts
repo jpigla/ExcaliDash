@@ -1,3 +1,4 @@
+import { sweepStaleGuestUploads } from "./guestUploadPolicy";
 import express from "express";
 import cors from "cors";
 import path from "path";
@@ -275,6 +276,7 @@ app.use(
       "Authorization",
       "x-csrf-token",
       "x-imported-file",
+      "X-Guest-Share",
     ],
     exposedHeaders: ["x-csrf-token", "x-request-id"],
   }),
@@ -502,6 +504,7 @@ const socketHandlers = registerSocketHandlers({
   prisma,
   authModeService,
   jwtSecret: config.jwtSecret,
+  isAllowedOrigin,
 });
 app.get("/health", async (_req, res) => {
   try {
@@ -588,8 +591,15 @@ registerDashboardRoutes(app, {
   MAX_PAGE_SIZE,
   config,
   logAuditEvent,
-  internDrawingFiles: (files, userId, drawingId, persist) =>
-    internDrawingFilesWithPrisma(files, userId, drawingId, prisma, persist),
+  internDrawingFiles: (files, userId, drawingId, persist, admitUpload) =>
+    internDrawingFilesWithPrisma(
+      files,
+      userId,
+      drawingId,
+      prisma,
+      persist,
+      admitUpload,
+    ),
   revalidateDrawingAccess: socketHandlers.revalidateDrawingAccess,
   emitDrawingScene: socketHandlers.emitDrawingScene,
   io,
@@ -643,6 +653,16 @@ if (isMain) {
           console.log(
             `[Cleanup] Deleted ${result.count} old drawing snapshots`,
           );
+        }
+        try {
+          const removed = await sweepStaleGuestUploads(prisma);
+          if (removed > 0) {
+            console.log(
+              `[Cleanup] Deleted ${removed} unreferenced guest uploads`,
+            );
+          }
+        } catch (err) {
+          console.error("[Cleanup] Guest upload cleanup failed:", err);
         }
         await reclaimSqliteFreeSpace(prisma, config.databaseUrl ?? "");
       } catch (err) {

@@ -150,10 +150,33 @@ describe("Link Sharing - Scoped Guest Access", () => {
     expect(viewSession.status).toBe(200);
     expect(editSession.status).toBe(200);
 
+    const sessionCookie = (response: typeof viewSession) => {
+      const cookie = response.headers["set-cookie"][0];
+      expect(cookie).toContain("HttpOnly");
+      expect(cookie).toContain("SameSite=Strict");
+      expect(response.body.session).toBeUndefined();
+      return cookie.split(";")[0];
+    };
+    const viewCookie = sessionCookie(viewSession);
+    const editCookie = sessionCookie(editSession);
+    await request(app).get(path).set("Cookie", viewCookie).expect(404);
+    await request(app)
+      .get(path)
+      .set("X-Guest-Share", edit.id)
+      .set("Cookie", viewCookie)
+      .expect(404);
+    await request(app)
+      .get(`/guest-links/${view.id}/session`)
+      .set("Cookie", viewCookie)
+      .expect(200);
+
     const viewResponse = await request(app)
       .get(path)
-      .set("Authorization", `Guest ${viewSession.body.session}`)
-      .set("Cookie", `${ACCESS_TOKEN_COOKIE_NAME}=${ownerToken}`);
+      .set("X-Guest-Share", view.id)
+      .set(
+        "Cookie",
+        `${viewCookie}; ${editCookie}; ${ACCESS_TOKEN_COOKIE_NAME}=${ownerToken}`,
+      );
     expect(viewResponse.status).toBe(200);
     expect(viewResponse.headers["cache-control"]).toBe("no-store");
     expect(viewResponse.body.accessLevel).toBe("view");
@@ -163,34 +186,110 @@ describe("Link Sharing - Scoped Guest Access", () => {
       (
         await request(app)
           .get(`/drawings/${other.id}`)
-          .set("Authorization", `Guest ${editSession.body.session}`)
+          .set("X-Guest-Share", edit.id)
+          .set("Cookie", editCookie)
       ).status,
     ).toBe(404);
 
     const { anonAgent, anonCsrfHeaderName, anonCsrfToken } =
       await createAnonymousAgentWithCsrf();
-    const write = (session: string) =>
+    const write = (shareId: string, cookie: string) =>
       anonAgent
         .put(path)
-        .set("Authorization", `Guest ${session}`)
+        .set("X-Guest-Share", shareId)
+        .set("Cookie", cookie)
         .set(anonCsrfHeaderName, anonCsrfToken)
         .send({ elements: [] });
-    expect((await write(viewSession.body.session)).status).toBe(404);
-    expect((await write(editSession.body.session)).status).toBe(200);
+    expect((await write(view.id, viewCookie)).status).toBe(404);
+    expect((await write(edit.id, editCookie)).status).toBe(200);
 
     const revoke = await ownerAgent
       .delete(`${path}/link-shares/${edit.id}`)
       .set("Authorization", `Bearer ${ownerToken}`)
       .set(ownerCsrfHeaderName, ownerCsrfToken);
     expect(revoke.status).toBe(200);
-    expect((await write(editSession.body.session)).status).toBe(404);
+    expect((await write(edit.id, editCookie)).status).toBe(404);
     expect(
       (
         await request(app)
           .get(path)
-          .set("Authorization", `Guest ${viewSession.body.session}`)
+          .set("X-Guest-Share", view.id)
+          .set("Cookie", viewCookie)
       ).status,
     ).toBe(200);
+  });
+
+  it("omits historical image metadata and prevents a guest from reattaching its known file ID", async () => {
+    const drawing = await createDrawing();
+    const historical = {
+      id: "old",
+      type: "image",
+      fileId: "historical",
+      isDeleted: true,
+      version: 2,
+      text: "old content",
+    };
+    const files = {
+      historical: {
+        id: "historical",
+        dataURL: "data:image/png;base64,AQIDBA==",
+      },
+    };
+    await prisma.drawing.update({
+      where: { id: drawing.id },
+      data: {
+        elements: JSON.stringify([historical]),
+        files: JSON.stringify(files),
+      },
+    });
+    await prisma.drawingFile.create({
+      data: {
+        drawingId: drawing.id,
+        fileId: "historical",
+        mimeType: "image/png",
+        sizeBytes: 4,
+        storage: "db",
+        data: Buffer.from([1, 2, 3, 4]),
+      },
+    });
+    const share = (await createLinkShare(drawing.id, "edit")).body.share;
+    // Even the link that originally uploaded a recently published image
+    // may not reattach it after the owner has removed it.
+    await prisma.drawingFile.update({
+      where: {
+        drawingId_fileId: { drawingId: drawing.id, fileId: "historical" },
+      },
+      data: { guestShareId: share.id, guestPublishedAt: new Date() },
+    });
+    const unlocked = await unlock(share);
+    expect(unlocked.status).toBe(200);
+    const cookie = unlocked.headers["set-cookie"][0].split(";")[0];
+    const path = `/drawings/${drawing.id}`;
+    const read = await request(app)
+      .get(path)
+      .set("X-Guest-Share", share.id)
+      .set("Cookie", cookie);
+    expect(read.status).toBe(200);
+    expect(read.body.files).toEqual({});
+    expect(read.body.elements).toEqual([
+      { id: "old", isDeleted: true, version: 2 },
+    ]);
+
+    const { anonAgent, anonCsrfHeaderName, anonCsrfToken } =
+      await createAnonymousAgentWithCsrf();
+    const write = await anonAgent
+      .put(path)
+      .set("X-Guest-Share", share.id)
+      .set("Cookie", cookie)
+      .set(anonCsrfHeaderName, anonCsrfToken)
+      .send({ elements: [{ ...historical, isDeleted: false, version: 3 }] });
+    expect(write.status).toBe(409);
+    expect(write.body.code).toBe("GUEST_IMAGE_UNAVAILABLE");
+    const download = await request(app)
+      .get(`/files/${drawing.id}/historical`)
+      .set("X-Guest-Share", share.id)
+      .set("Cookie", cookie);
+    expect(download.status).toBe(404);
   });
 
   it("checks the exact password and invalidates issued sessions after a change", async () => {
@@ -221,7 +320,8 @@ describe("Link Sharing - Scoped Guest Access", () => {
       (
         await request(app)
           .get(path)
-          .set("Authorization", `Guest ${previous.body.session}`)
+          .set("X-Guest-Share", share.id)
+          .set("Cookie", previous.headers["set-cookie"][0].split(";")[0])
       ).status,
     ).toBe(404);
     expect((await unlock(share, "New-Password!")).status).toBe(200);

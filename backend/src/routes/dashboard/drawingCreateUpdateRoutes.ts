@@ -16,10 +16,18 @@ import {
 import type { DrawingRouteContext } from "./drawingRouteContext";
 import { applySceneUpdateTx, isVersionConflict } from "./sceneUpdate";
 import { collectRetainedDrawingFileIds } from "../storage/retainedFiles";
-import { hasGuestAuthorization } from "../../authz/guestLinkSecurity";
+import { isGuestRequest } from "../../authz/guestLinkSecurity";
+import {
+  admitGuestUpload,
+  checkGuestUploadQuota,
+  guestUploadMetadata,
+  guestUploadProvisionalMs,
+  GuestUploadLimitError,
+} from "../../guestUploadPolicy";
 import { storeDrawingFileOnce } from "../../drawingFileStore";
 import {
   guestDrawingResponse,
+  guestSceneFileIds,
   scopeGuestDrawingFiles,
 } from "./drawingGuestResponse";
 import { isInlineGuestImage } from "../../fileProcessing";
@@ -28,6 +36,8 @@ import {
   lockDrawingForGuestAccess,
   revokeAllDrawingGuestLinks,
 } from "./drawingGuestLock";
+
+const guestImageUnavailable = new Error("Guest image unavailable");
 
 export const registerDrawingCreateUpdateRoutes = (
   app: express.Express,
@@ -213,7 +223,7 @@ export const registerDrawingCreateUpdateRoutes = (
     "/drawings/:id",
     optionalAuth,
     asyncHandler(async (req, res) => {
-      if (hasGuestAuthorization(req.headers.authorization)) {
+      if (isGuestRequest(req)) {
         res.set("Cache-Control", "no-store");
       }
       const principal = await getRequestPrincipal(req);
@@ -319,12 +329,20 @@ export const registerDrawingCreateUpdateRoutes = (
         knownFileIdsBeforeUpdate = await listDrawingFileIds(id);
         let filesToIntern = payload.files;
         if (principal?.kind === "guest") {
+          const visible = guestSceneFileIds(
+            payload.elements ?? parseJsonField(existingDrawing.elements, []),
+          );
+          filesToIntern = Object.fromEntries(
+            Object.entries(payload.files).filter(([fileId]) =>
+              visible.has(fileId),
+            ),
+          );
           const existingFiles = parseJsonField<
             Record<string, { dataURL?: unknown }>
           >(existingDrawing.files, {});
           filesToIntern = scopeGuestDrawingFiles(
             id,
-            payload.files,
+            filesToIntern,
             [...knownFileIdsBeforeUpdate].map((fileId) => ({ fileId })),
           );
           for (const [fileId, file] of Object.entries(filesToIntern)) {
@@ -352,15 +370,42 @@ export const registerDrawingCreateUpdateRoutes = (
             filesToIntern,
             ownerUserId,
             id,
-            authorizeGuestWrite
+            principal?.kind === "guest" && authorizeGuestWrite
               ? (content) =>
                   prisma.$transaction(async (tx) => {
                     await authorizeGuestWrite(tx);
-                    return storeDrawingFileOnce(tx, content);
+                    await checkGuestUploadQuota(
+                      tx,
+                      principal,
+                      id,
+                      content.fileId,
+                      content.sizeBytes ?? 0,
+                    );
+                    return storeDrawingFileOnce(tx, {
+                      ...content,
+                      ...guestUploadMetadata(principal.shareId),
+                    });
                   })
+              : undefined,
+            principal?.kind === "guest"
+              ? async ({ fileId, sizeBytes }) => {
+                  await admitGuestUpload(prisma, principal);
+                  await checkGuestUploadQuota(
+                    prisma,
+                    principal,
+                    id,
+                    fileId,
+                    sizeBytes,
+                  );
+                }
               : undefined,
           );
         } catch (error) {
+          if (error instanceof GuestUploadLimitError) {
+            return res
+              .status(error.status)
+              .json({ error: error.message, code: error.code });
+          }
           if (error !== guestAccessEnded) throw error;
           return res.status(404).json({ error: "Drawing not found" });
         }
@@ -449,11 +494,49 @@ export const registerDrawingCreateUpdateRoutes = (
             maxRetries: payload.version === undefined ? 2 : 0,
             authorizeWrite: authorizeGuestWrite,
             revokeGuestLinks: movingToTrash,
-            mutate: () => ({
-              data,
-              incomingFiles: processedFilesForUpdate,
-              requiredFileIds: requiredFileIdsForUpdate,
-            }),
+            mutate: async (current, tx) => {
+              if (
+                principal?.kind === "guest" &&
+                payload.elements !== undefined
+              ) {
+                const currentIds = guestSceneFileIds(
+                  parseJsonField(current.elements, []),
+                );
+                const added = [...guestSceneFileIds(payload.elements)].filter(
+                  (fileId) => !currentIds.has(fileId),
+                );
+                if (added.length) {
+                  const pending = await tx.drawingFile.findMany({
+                    where: { drawingId: id, fileId: { in: added } },
+                    select: {
+                      fileId: true,
+                      guestShareId: true,
+                      guestPublishedAt: true,
+
+                      createdAt: true,
+                    },
+                  });
+                  const allowed = new Set(
+                    pending
+                      .filter(
+                        (file) =>
+                          file.guestShareId === principal.shareId &&
+                          file.guestPublishedAt === null &&
+                          file.createdAt.getTime() >
+                            Date.now() - guestUploadProvisionalMs,
+                      )
+                      .map(({ fileId }) => fileId),
+                  );
+                  if (added.some((fileId) => !allowed.has(fileId)))
+                    throw guestImageUnavailable;
+                }
+              }
+              return {
+                data,
+                incomingFiles: processedFilesForUpdate,
+                requiredFileIds: requiredFileIdsForUpdate,
+              };
+            },
           });
           updatedDrawing = result.drawing;
         } else if (movingToTrash || authorizeGuestWrite) {
@@ -484,6 +567,12 @@ export const registerDrawingCreateUpdateRoutes = (
         // a concurrent valid save may have checked these rows without having
         // committed its scene yet. Guarded trim reclaims unused rows and their
         // exact S3 generations after owning the drawing's version update.
+        if (error === guestImageUnavailable) {
+          return res.status(409).json({
+            error: "Image is not available for this guest link",
+            code: "GUEST_IMAGE_UNAVAILABLE",
+          });
+        }
         if (error === guestAccessEnded) {
           return res.status(404).json({ error: "Drawing not found" });
         }

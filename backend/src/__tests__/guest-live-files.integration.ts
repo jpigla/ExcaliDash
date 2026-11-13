@@ -6,7 +6,10 @@ import { Server } from "socket.io";
 import request from "supertest";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import type { AuthModeService } from "../auth/authMode";
-import { issueGuestSession } from "../authz/guestLinkSecurity";
+import {
+  guestSessionCookieName,
+  issueGuestSession,
+} from "../authz/guestLinkSecurity";
 import { config } from "../config";
 import { registerFileRoutes } from "../routes/files";
 import { registerSocketHandlers } from "../server/socket";
@@ -71,18 +74,22 @@ it("authorizes raw image transfers through the particular guest grant", async ()
     asyncHandler: (fn) => (req, res, next) =>
       void fn(req, res, next).catch(next),
   });
-  const upload = (drawingId: string, session: string) =>
+  const cookie = (guest: typeof reader) =>
+    `excalidash-guest-${guest.share.id}=${guest.session}`;
+  const upload = (drawingId: string, guest: typeof reader) =>
     request(app)
       .put(`/drawings/${drawingId}/files/image`)
-      .set("Authorization", `Guest ${session}`)
+      .set("X-Guest-Share", guest.share.id)
+      .set("Cookie", cookie(guest))
       .type("png")
       .send(Buffer.from([137, 80, 78, 71]));
-  await upload(drawing.id, reader.session).expect(404);
-  await upload(other.id, editor.session).expect(404);
-  await upload(drawing.id, editor.session).expect(200);
+  await upload(drawing.id, reader).expect(404);
+  await upload(other.id, editor).expect(404);
+  await upload(drawing.id, editor).expect(200);
   await request(app)
     .put(`/drawings/${drawing.id}/files/scriptable`)
-    .set("Authorization", `Guest ${editor.session}`)
+    .set("X-Guest-Share", editor.share.id)
+    .set("Cookie", cookie(editor))
     .type("image/svg+xml")
     .send(
       '<svg xmlns="http://www.w3.org/2000/svg"><script>void 0</script></svg>',
@@ -95,34 +102,83 @@ it("authorizes raw image transfers through the particular guest grant", async ()
   ).toBe(0);
   const url = `/files/${drawing.id}/image`;
   await request(app).get(url).expect(404);
+  const readAsGuest = () =>
+    request(app)
+      .get(url)
+      .set("X-Guest-Share", reader.share.id)
+      .set("Cookie", cookie(reader));
+  await readAsGuest().expect(404); // staged, not yet present on the board
+  await prisma.drawingSnapshot.create({
+    data: {
+      drawingId: drawing.id,
+      version: 1,
+      elements: JSON.stringify([{ id: "old", type: "image", fileId: "image" }]),
+      appState: "{}",
+      files: JSON.stringify({ image: { dataURL: url } }),
+    },
+  });
+  await readAsGuest().expect(404); // exact file ID known, snapshot-only
+  await prisma.drawing.update({
+    where: { id: drawing.id },
+    data: {
+      elements: JSON.stringify([
+        { id: "old", type: "image", fileId: "image", isDeleted: true },
+      ]),
+    },
+  });
+  await readAsGuest().expect(404); // tombstone in live scene
+  await prisma.drawing.update({
+    where: { id: drawing.id },
+    data: {
+      elements: JSON.stringify([
+        { id: "new", type: "image", fileId: "image", isDeleted: false },
+      ]),
+    },
+  });
   await request(app)
     .get(url)
-    .set("Authorization", `Guest ${reader.session}`)
+    .set("X-Guest-Share", reader.share.id)
+    .set("Cookie", cookie(reader))
     .expect("Cache-Control", "no-store")
     .expect(200);
   await prisma.drawingLinkShare.update({
     where: { id: editor.share.id },
     data: { revision: { increment: 1 } },
   });
-  await upload(drawing.id, editor.session).expect(404);
+  await upload(drawing.id, editor).expect(404);
   await request(app)
     .get(url)
-    .set("Authorization", `Guest ${reader.session}`)
+    .set("X-Guest-Share", reader.share.id)
+    .set("Cookie", cookie(reader))
     .expect(200);
 });
 
-const guestSocket = async (url: string, guestSession: string) => {
-  const ws = new WebSocket(url);
+const guestSocket = async (
+  url: string,
+  guest: Awaited<ReturnType<typeof createGuest>>,
+  options?: { selectedShareId?: string; origin?: string; rejected?: boolean },
+) => {
+  const ws = new WebSocket(url, {
+    headers: {
+      cookie: `${guestSessionCookieName(guest.share.id)}=${guest.session}`,
+      ...(options?.origin && { origin: options.origin }),
+    },
+  });
   sockets.add(ws);
   const messages: string[] = [];
   ws.addEventListener("message", ({ data }) => {
     if (typeof data !== "string") return;
-    if (data.startsWith("0")) ws.send(`40${JSON.stringify({ guestSession })}`);
-    else if (data === "2") ws.send("3");
+    if (data.startsWith("0")) {
+      ws.send(
+        `40${JSON.stringify({ guestShareId: options?.selectedShareId ?? guest.share.id })}`,
+      );
+    } else if (data === "2") ws.send("3");
     else messages.push(data);
   });
   await expect
-    .poll(() => messages.some((msg) => msg.startsWith("40")))
+    .poll(() =>
+      messages.some((msg) => msg.startsWith(options?.rejected ? "44" : "40")),
+    )
     .toBe(true);
   return { ws, messages };
 };
@@ -143,6 +199,8 @@ it("checks guest roles on live edits and stops passive scene delivery after revo
     prisma,
     authModeService: { getAuthEnabled: async () => true } as AuthModeService,
     jwtSecret: config.jwtSecret,
+    isAllowedOrigin: (origin) =>
+      origin === undefined || origin === "https://app.test",
   });
   http.listen(0, "127.0.0.1");
   try {
@@ -150,10 +208,22 @@ it("checks guest roles on live edits and stops passive scene delivery after revo
     const { port } = http.address() as AddressInfo;
     const url = `ws://127.0.0.1:${port}/socket.io/?EIO=4&transport=websocket`;
     const [view, edit, passive] = await Promise.all(
-      [reader, editor, expiring].map((guest) =>
-        guestSocket(url, guest.session),
-      ),
+      [reader, editor, expiring].map((guest) => guestSocket(url, guest)),
     );
+    const wrongShare = await guestSocket(url, reader, {
+      selectedShareId: editor.share.id,
+      rejected: true,
+    });
+    const wrongOrigin = await guestSocket(url, reader, {
+      origin: "https://other.test",
+      rejected: true,
+    });
+    expect(
+      wrongShare.messages.some((msg) => msg.includes("GUEST_ACCESS_ENDED")),
+    ).toBe(true);
+    expect(
+      wrongOrigin.messages.some((msg) => msg.includes("Authentication failed")),
+    ).toBe(true);
     for (const guest of [view, edit, passive]) {
       guest.ws.send(
         `421${JSON.stringify(["join-room", { drawingId: drawing.id, user: { name: "Guest" } }])}`,
@@ -170,15 +240,88 @@ it("checks guest roles on live edits and stops passive scene delivery after revo
     view.ws.send(
       `42${JSON.stringify(["element-update", { drawingId: drawing.id, elements: [] }])}`,
     );
+    edit.ws.send(
+      `42${JSON.stringify(["element-update", { drawingId: drawing.id, elements: [{ id: "invalid-edit", type: "freedraw", points: "not an array" }] }])}`,
+    );
+    edit.ws.send(
+      `42${JSON.stringify(["cursor-move", { drawingId: drawing.id, pointer: { x: "bad-cursor", y: 0, tool: "pointer" } }])}`,
+    );
     await expect
       .poll(() => view.messages.some((msg) => msg.includes("Read-only access")))
       .toBe(true);
     edit.ws.send(
-      `42${JSON.stringify(["element-update", { drawingId: drawing.id, elements: [{ id: "guest-edit" }] }])}`,
+      `42${JSON.stringify([
+        "element-update",
+        {
+          drawingId: drawing.id,
+          elements: [
+            {
+              id: "guest-edit",
+              type: "rectangle",
+              x: 0,
+              y: 0,
+              width: 50,
+              height: 50,
+              angle: 0,
+              strokeColor: "#000000",
+              backgroundColor: "transparent",
+              fillStyle: "solid",
+              strokeWidth: 1,
+              strokeStyle: "solid",
+              roundness: null,
+              roughness: 1,
+              opacity: 100,
+              seed: 1,
+              version: 1,
+              versionNonce: 1,
+              index: null,
+              isDeleted: false,
+              groupIds: [],
+              frameId: null,
+              boundElements: null,
+              updated: 1,
+              link: null,
+              locked: false,
+            },
+          ],
+        },
+      ])}`,
     );
     await expect
       .poll(() => view.messages.some((msg) => msg.includes("guest-edit")))
       .toBe(true);
+    expect(
+      view.messages.some(
+        (msg) => msg.includes("invalid-edit") || msg.includes("bad-cursor"),
+      ),
+    ).toBe(false);
+
+    await handlers.emitDrawingScene(drawing.id, {
+      drawingId: drawing.id,
+      persisted: true,
+      elements: [
+        {
+          id: "deleted-content",
+          version: 3,
+          versionNonce: 5,
+          isDeleted: true,
+          type: "image",
+          fileId: "deleted-image",
+          text: "previous-private-content",
+        },
+      ],
+      files: {
+        "deleted-image": { dataURL: "data:image/png;base64,AQID" },
+      },
+    });
+    await expect
+      .poll(() => view.messages.some((msg) => msg.includes("deleted-content")))
+      .toBe(true);
+    const tombstone = view.messages.find((msg) =>
+      msg.includes("deleted-content"),
+    );
+    expect(tombstone).not.toContain("previous-private-content");
+    expect(tombstone).not.toContain("deleted-image");
 
     await prisma.drawingLinkShare.update({
       where: { id: reader.share.id },

@@ -12,8 +12,8 @@ import {
 } from "../../s3";
 import { type DrawingPrincipal } from "../../authz/sharing";
 import {
-  hasGuestAuthorization,
-  readGuestAuthorization,
+  isGuestRequest,
+  readGuestRequest,
 } from "../../authz/guestLinkSecurity";
 import { config } from "../../config";
 
@@ -46,9 +46,8 @@ export const createDrawingRouteContext = (
   const getRequestPrincipal = async (
     req: express.Request,
   ): Promise<DrawingPrincipal | null> => {
-    const authorization = req.headers.authorization;
-    if (hasGuestAuthorization(authorization)) {
-      return readGuestAuthorization(authorization, config.jwtSecret);
+    if (isGuestRequest(req)) {
+      return readGuestRequest(req, config.jwtSecret);
     }
     if (req.user?.id) return { kind: "user", userId: req.user.id };
     return null;

@@ -4,6 +4,7 @@ import {
 } from "../utils/passwordPolicy";
 import { API_URL, api, axios, isAxiosError } from "./client";
 import type { DrawingSortField, SortDirection } from "./drawings";
+import { GUEST_SHARE_HEADER } from "./guestLinks";
 import { isOidcAutoLoginSuppressed } from "../utils/oidcLogout";
 
 const USER_KEY = "excalidash-user";
@@ -340,17 +341,17 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const authorization = error.config?.headers?.get?.("Authorization");
-    const isGuestRequest =
-      typeof authorization === "string" && authorization.startsWith("Guest ");
-    const isGuestUnlock = String(error.config?.url || "").startsWith(
+    const isGuestRequest = Boolean(
+      error.config?.headers?.get?.(GUEST_SHARE_HEADER),
+    );
+    const isGuestLinkEndpoint = String(error.config?.url || "").startsWith(
       "/guest-links/",
     );
     const redactGuestError = () => {
       // Axios errors include request headers and body. Leave those available
       // for internal CSRF retries, but never expose a guest credential to a
       // caller's diagnostics or error logger.
-      if ((isGuestRequest || isGuestUnlock) && isAxiosError(error)) {
+      if ((isGuestRequest || isGuestLinkEndpoint) && isAxiosError(error)) {
         delete error.config;
         delete error.request;
         if (error.response) {
@@ -385,7 +386,7 @@ api.interceptors.response.use(
     }
 
     if (error.response?.status === 401) {
-      if (isGuestRequest || isGuestUnlock) return redactGuestError();
+      if (isGuestRequest || isGuestLinkEndpoint) return redactGuestError();
       const originalRequest = (error.config || {}) as RetriableRequestConfig;
       const url = String(originalRequest.url || "");
       const isAuthRoute = url.includes("/auth/");

@@ -78,6 +78,26 @@ type BuildRemoteSceneUpdateInput = {
   captureUpdate?: CaptureMode;
 };
 
+// Excalidraw will not replace an existing file ID. Guest canvases must wait
+// for authenticated hydration instead of registering a bare protected URL.
+export const isInlineImageFile = (file: unknown): boolean => {
+  if (!file || typeof file !== "object" || !("dataURL" in file)) return false;
+  return (
+    typeof file.dataURL === "string" && file.dataURL.startsWith("data:image/")
+  );
+};
+
+// Guest snapshots omit the content of deleted elements. A client that already
+// knows one can apply the deletion with its local shape, while new guests never
+// hydrate incomplete elements.
+export const isGuestElementTombstone = (element: any): boolean =>
+  element?.isDeleted === true && typeof element.type !== "string";
+
+export const expandGuestElementTombstone = (element: any, known: any): any => {
+  if (!isGuestElementTombstone(element)) return element;
+  return known ? { ...known, ...element } : undefined;
+};
+
 export const getPersistedAppState = (
   appState: Record<string, any> | null | undefined,
 ) => {

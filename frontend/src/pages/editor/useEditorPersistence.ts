@@ -57,7 +57,7 @@ type PersistenceRefs = {
 
 type UseEditorPersistenceParams = {
   drawingId?: string;
-  guestSession?: string;
+  guestShareId?: string;
   onGuestAccessEnded?: () => void;
   canEdit: boolean;
   refs: PersistenceRefs;
@@ -76,7 +76,7 @@ type UseEditorPersistenceParams = {
 
 export const useEditorPersistence = ({
   drawingId: activeDrawingId,
-  guestSession,
+  guestShareId,
   onGuestAccessEnded,
   canEdit,
   refs,
@@ -238,7 +238,7 @@ export const useEditorPersistence = ({
               ...(sendFiles ? { files: filesToSave } : {}),
               version: refs.currentDrawingVersion.current ?? undefined,
             },
-            ...(guestSession ? [guestSession] : []),
+            ...(guestShareId ? [guestShareId] : []),
           );
           if (!canEditRef.current || !isCurrent()) return;
           if (typeof updated.version === "number") {
@@ -267,7 +267,7 @@ export const useEditorPersistence = ({
                 elementsToSave,
                 filesToSave,
                 isCurrent,
-                guestSession,
+                guestShareId,
               );
               if (!reconciled) return;
               await persistScene(
@@ -291,7 +291,7 @@ export const useEditorPersistence = ({
       );
     } catch (err) {
       if (
-        guestSession &&
+        guestShareId &&
         api.isAxiosError(err) &&
         [401, 403, 404].includes(err.response?.status ?? 0)
       ) {
@@ -303,7 +303,7 @@ export const useEditorPersistence = ({
         throw err;
       }
       if (
-        guestSession &&
+        guestShareId &&
         api.isAxiosError(err) &&
         err.response?.status === 415
       ) {
@@ -428,7 +428,7 @@ export const useEditorPersistence = ({
       await api.updateDrawing(
         drawingId,
         { preview: svg.outerHTML },
-        ...(guestSession ? [guestSession] : []),
+        ...(guestShareId ? [guestShareId] : []),
       );
     } catch (err) {
       console.error("Failed to save preview", err);

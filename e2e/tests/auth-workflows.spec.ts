@@ -3,6 +3,11 @@ import type { APIRequestContext, Page } from "@playwright/test";
 import { owner, viewer } from "../fixtures/auth";
 import { openAccountMenu } from "./helpers/sidebar";
 import {
+  injectImageElementThenFile,
+  waitForElementPresent,
+  waitForFileInEditor,
+} from "./helpers/editorImages";
+import {
   API_URL,
   createDrawing,
   deleteDrawing,
@@ -367,6 +372,15 @@ test("protected guest links retain separate access across tabs and reload", asyn
   try {
     const protectedEdit = await createLink("edit", "Workshop-password");
     const publicView = await createLink("view");
+    await guestContext.addInitScript((shareId) => {
+      if (!sessionStorage.getItem("legacy-guest-session-seeded")) {
+        localStorage.setItem(
+          `excalidash-guest-link:${shareId}`,
+          "old-test-session",
+        );
+        sessionStorage.setItem("legacy-guest-session-seeded", "1");
+      }
+    }, protectedEdit.id);
     await open(editor, protectedEdit);
     await expect(
       editor.getByRole("heading", { name: "Password required" }),
@@ -377,6 +391,17 @@ test("protected guest links retain separate access across tabs and reload", asyn
     await editor.getByLabel("Guest link password").fill("Workshop-password");
     await editor.getByRole("button", { name: "Open drawing" }).click();
     await expect(canvas(editor)).toBeVisible();
+    const guestCookies = (await guestContext.cookies()).filter((cookie) =>
+      cookie.name.includes(protectedEdit.id),
+    );
+    expect(guestCookies).toHaveLength(1);
+    expect(guestCookies[0].httpOnly).toBe(true);
+    expect(
+      await editor.evaluate(
+        (id) => localStorage.getItem(`excalidash-guest-link:${id}`),
+        protectedEdit.id,
+      ),
+    ).toBeNull();
 
     const viewerRead = viewer.waitForResponse(
       (response) =>
@@ -389,14 +414,78 @@ test("protected guest links retain separate access across tabs and reload", asyn
     await editor.reload();
     await expect(canvas(editor)).toBeVisible();
 
+    const tokenlessEditor = await guestContext.newPage();
+    await tokenlessEditor.goto(`/shared/${drawing.id}/${protectedEdit.id}`);
+    await expect(canvas(tokenlessEditor)).toBeVisible();
+
     const revoked = await request.delete(`${path}/${protectedEdit.id}`, {
       headers: await getCsrfHeaders(request),
     });
     expect(revoked.ok()).toBe(true);
     await expect(canvas(editor)).toHaveCount(0);
+    await expect(canvas(tokenlessEditor)).toHaveCount(0);
     await expect(canvas(viewer)).toBeVisible();
   } finally {
     await guestContext.close();
+    await deleteDrawing(request, drawing.id);
+  }
+});
+
+test("an image added by a guest editor reaches a separate viewer and survives reload", async ({
+  browser,
+  request,
+}) => {
+  await apiSignIn(request);
+  const drawing = await createDrawing(request, {
+    name: "Guest image collaboration",
+  });
+  const editContext = await browser.newContext();
+  const viewContext = await browser.newContext();
+
+  const openAs = async (page: Page, permission: "edit" | "view") => {
+    const response = await request.post(
+      `${API_URL}/drawings/${drawing.id}/link-shares`,
+      {
+        headers: await getCsrfHeaders(request),
+        data: { permission, expiresAt: null },
+      },
+    );
+    expect(response.ok()).toBe(true);
+    const { share } = await response.json();
+    await page.goto(`/shared/${drawing.id}/${share.id}#${share.token}`);
+    await page.waitForFunction(
+      () =>
+        Boolean((window as any).__EXCALIDASH_EXCALIDRAW_API__) &&
+        (window as any).__EXCALIDASH_SOCKET_STATUS__?.connected === true,
+    );
+  };
+
+  try {
+    const editor = await editContext.newPage();
+    const viewer = await viewContext.newPage();
+    await openAs(editor, "edit");
+    await openAs(viewer, "view");
+
+    const { fileId, elementId } = await injectImageElementThenFile(editor);
+    await waitForElementPresent(viewer, elementId);
+    await waitForFileInEditor(viewer, fileId, true);
+
+    await expect
+      .poll(async () => {
+        const saved = await getDrawing(request, drawing.id);
+        return (
+          saved.elements?.some((element) => element.id === elementId) &&
+          Boolean(saved.files?.[fileId])
+        );
+      })
+      .toBe(true);
+
+    await viewer.reload();
+    await waitForElementPresent(viewer, elementId);
+    await waitForFileInEditor(viewer, fileId, true);
+  } finally {
+    await editContext.close();
+    await viewContext.close();
     await deleteDrawing(request, drawing.id);
   }
 });

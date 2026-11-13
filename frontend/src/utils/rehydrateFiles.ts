@@ -1,5 +1,5 @@
 import { API_URL } from "../api/client";
-import { guestAuthorization } from "../api/guestLinks";
+import { guestShareHeaders } from "../api/guestLinks";
 
 /**
  * S3-mode file rehydration.
@@ -53,21 +53,21 @@ const blobToDataUrl = (blob: Blob): Promise<string> =>
  * failed fetch must leave the original reference untouched rather than blank
  * the image.
  */
-type GuestFileAccess = { drawingId: string; guestSession: string };
+type GuestFileAccess = { drawingId: string; guestShareId: string };
 
 const fetchAsDataUrl = async (
   url: string,
   mimeType: unknown,
   fallbackUrl?: string,
-  guestSession?: string,
+  guestShareId?: string,
 ): Promise<string | null> => {
   try {
     let response = await fetch(url, {
-      credentials: guestSession ? "omit" : "same-origin",
-      headers: guestAuthorization(guestSession),
-      ...(guestSession && { redirect: "error", cache: "no-store" }),
+      credentials: guestShareId ? "include" : "same-origin",
+      headers: guestShareHeaders(guestShareId),
+      ...(guestShareId && { redirect: "error", cache: "no-store" }),
     });
-    if (!guestSession && response.status === 404 && fallbackUrl) {
+    if (!guestShareId && response.status === 404 && fallbackUrl) {
       response = await fetch(fallbackUrl, { credentials: "same-origin" });
     }
     if (!response.ok) return null;
@@ -219,7 +219,7 @@ export const rehydrateFilesProgressive = async (
           : (file as any).dataURL,
         (file as any)?.mimeType,
         undefined,
-        guest?.guestSession,
+        guest?.guestShareId,
       );
       if (isCancelled?.()) return;
       if (dataURL) {

@@ -55,10 +55,10 @@ const GuestEditor = ({
       shareId={shareId}
       token={token}
     >
-      {(guestSession, onGuestAccessEnded) => (
+      {(guestShareId, onGuestAccessEnded) => (
         <ExcalidrawEditor
-          key={guestSession}
-          guestSession={guestSession}
+          key={guestShareId}
+          guestShareId={guestShareId}
           onGuestAccessEnded={onGuestAccessEnded}
         />
       )}
@@ -67,16 +67,16 @@ const GuestEditor = ({
 };
 
 const ExcalidrawEditor: React.FC<{
-  guestSession?: string;
+  guestShareId?: string;
   onGuestAccessEnded?: () => void;
-}> = ({ guestSession, onGuestAccessEnded }) => {
+}> = ({ guestShareId, onGuestAccessEnded }) => {
   useKeyboardLayoutFix();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
   const { theme, toggleTheme } = useTheme();
   const { user: signedInUser } = useAuth();
-  const user = guestSession ? null : signedInUser;
+  const user = guestShareId ? null : signedInUser;
   const [accessLevel, setAccessLevel] = useState<
     "none" | "view" | "edit" | "owner"
   >("none");
@@ -160,7 +160,7 @@ const ExcalidrawEditor: React.FC<{
     };
   }, []);
   const handleSocketAccessDenied = useCallback(() => {
-    if (guestSession) {
+    if (guestShareId) {
       onGuestAccessEnded?.();
       return;
     }
@@ -169,7 +169,7 @@ const ExcalidrawEditor: React.FC<{
       replace: true,
     });
   }, [
-    guestSession,
+    guestShareId,
     id,
     location.hash,
     location.pathname,
@@ -180,7 +180,7 @@ const ExcalidrawEditor: React.FC<{
   const { peers, socketMeRef, socketRef, isSyncing, onPointerUpdate } =
     useEditorCollaboration({
       drawingId: id,
-      guestSession,
+      guestShareId,
       me,
       isReady,
       excalidrawAPI,
@@ -194,7 +194,7 @@ const ExcalidrawEditor: React.FC<{
     });
   const { scanNow: scanFileUploads } = useEditorFileUploads({
     canEdit,
-    guestSession,
+    guestShareId,
     onGuestAccessEnded,
     drawingId: id,
     isReady,
@@ -254,7 +254,7 @@ const ExcalidrawEditor: React.FC<{
     runHistoryRestore,
   } = useEditorPersistence({
     drawingId: id,
-    guestSession,
+    guestShareId,
     onGuestAccessEnded,
     canEdit,
     refs: persistenceRefs,
@@ -308,7 +308,7 @@ const ExcalidrawEditor: React.FC<{
   );
   useEditorSceneLoader({
     id,
-    guestSession,
+    guestShareId,
     onGuestAccessEnded,
     user,
     location,
@@ -375,7 +375,7 @@ const ExcalidrawEditor: React.FC<{
     handleToggleAutoHide,
   } = useEditorCommands({
     autoHideEnabled,
-    guestSession,
+    guestShareId,
     canEdit,
     debouncedSaveLibrary,
     drawingId: id,
@@ -398,7 +398,7 @@ const ExcalidrawEditor: React.FC<{
     <>
       <EditorView
         id={id}
-        isGuest={Boolean(guestSession)}
+        isGuest={Boolean(guestShareId)}
         accessLevel={accessLevel}
         autoHideEnabled={autoHideEnabled}
         autosaveFailing={autosaveFailing}
@@ -442,7 +442,7 @@ const ExcalidrawEditor: React.FC<{
         onToggleAutoHide={handleToggleAutoHide}
         onToggleTheme={toggleTheme}
       />
-      {!guestSession && (
+      {!guestShareId && (
         <EditorDialogs
           drawingId={id}
           historyButtonRef={historyButtonRef}

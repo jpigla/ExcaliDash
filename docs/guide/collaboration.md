@@ -33,13 +33,15 @@ Enable account authentication on instances that use guest links to restrict acce
 
 Open **Share** on a drawing to create a guest link. A drawing can have several links, each with its own permissions, password, and expiration. Guests can open the link without an account. Choose **View** for live viewing or **Edit** to allow changes and image uploads. Set an expiration of one hour, one day, one week, a custom date and time, or no expiration.
 
-You can copy, edit, or revoke each active link from the share dialog. Share a protected link's password separately. The browser remembers a successful unlock for up to 30 days or until the link expires. Changing its password, permissions, or expiration ends active guest sessions for that link. Moving the drawing to Trash revokes all its guest links permanently.
+You can copy, edit, or revoke each active link from the share dialog. Share a protected link's password separately. The browser remembers a successful unlock in an HttpOnly cookie for up to 30 days or until the link expires. Hosted deployments require HTTPS for guest sessions. Changing its password, permissions, or expiration ends active guest sessions for that link. Moving the drawing to Trash revokes all its guest links permanently.
 
 On upgrade from versions that used the drawing ID as a public link, those public links are revoked. Open each drawing's share dialog to create replacement guest links. Existing account and collection permissions still apply.
 
 Keep the configured JWT secret stable across restarts and back it up separately from the database. The server derives a key from it to recover the share URLs for owners. Rotating that secret invalidates guest sessions and makes previous URLs unavailable to copy. Recreate affected links after rotation.
 
 If you use S3 for drawings with sensitive images, keep the bucket private and leave `S3_PUBLIC_URL` unset. Guest links control access through ExcaliDash. Public object URLs can still be opened directly.
+
+Guests can fetch images referenced by the current visible scene. Images kept only for history are restricted to account access. Each guest link allows up to 60 upload attempts per minute. Across all links for a drawing, guest uploads are limited to 100 MiB and 1,000 files. Unused guest uploads become eligible for cleanup after one hour.
 
 ## Configure your reverse proxy
 

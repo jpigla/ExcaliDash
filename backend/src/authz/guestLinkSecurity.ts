@@ -1,3 +1,5 @@
+import type { Request } from "express";
+import { parseCookieHeader } from "../auth/cookies";
 import crypto from "node:crypto";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
@@ -99,7 +101,7 @@ export const issueGuestSession = (
       exp,
       expiresAt: expiryMs,
     },
-    deriveKey(secret, "guest-link-session"),
+    deriveKey(secret, "guest-link-cookie-session"),
     { algorithm: "HS256", audience: sessionAudience },
   );
   return { session, expiresAt: new Date(expiryMs).toISOString() };
@@ -112,7 +114,7 @@ export const readGuestSession = (
   if (typeof token !== "string" || token.length > 2048) return null;
   try {
     const claims = sessionClaims.parse(
-      jwt.verify(token, deriveKey(secret, "guest-link-session"), {
+      jwt.verify(token, deriveKey(secret, "guest-link-cookie-session"), {
         algorithms: ["HS256"],
         audience: sessionAudience,
       }),
@@ -130,13 +132,33 @@ export const readGuestSession = (
   }
 };
 
-export const hasGuestAuthorization = (header: string | undefined): boolean =>
-  /^Guest(?:\s|$)/i.test(header ?? "");
+const shareIdPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 
-export const readGuestAuthorization = (
-  header: string | undefined,
+export const guestSessionCookieName = (shareId: string): string =>
+  `excalidash-guest-${shareId}`;
+
+export const getGuestPrincipalFromCookieHeader = (
+  cookieHeader: string | undefined,
+  shareId: unknown,
   secret: string,
 ): GuestPrincipal | null => {
-  const match = /^Guest ([^\s,]+)$/i.exec(header ?? "");
-  return match ? readGuestSession(match[1], secret) : null;
+  if (typeof shareId !== "string" || !shareIdPattern.test(shareId)) return null;
+  const cookie =
+    parseCookieHeader(cookieHeader)[guestSessionCookieName(shareId)];
+  const principal = readGuestSession(cookie, secret);
+  return principal?.shareId === shareId ? principal : null;
 };
+
+export const isGuestRequest = (req: Request): boolean =>
+  req.headers["x-guest-share"] !== undefined ||
+  /^Guest(?:\s|$)/i.test(req.headers.authorization ?? "");
+
+export const readGuestRequest = (
+  req: Request,
+  secret: string,
+): GuestPrincipal | null =>
+  getGuestPrincipalFromCookieHeader(
+    req.headers.cookie,
+    req.headers["x-guest-share"],
+    secret,
+  );

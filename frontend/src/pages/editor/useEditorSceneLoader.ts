@@ -4,13 +4,18 @@ import type { MutableRefObject } from "react";
 import { toast } from "sonner";
 import * as api from "../../api";
 import { rehydrateFilesProgressive } from "../../utils/rehydrateFiles";
-import { getPersistedAppState, hasRenderableElements } from "./shared";
+import {
+  getPersistedAppState,
+  hasRenderableElements,
+  isGuestElementTombstone,
+  isInlineImageFile,
+} from "./shared";
 
 type AccessLevel = "none" | "view" | "edit" | "owner";
 
 type SceneLoaderParams = {
   id: string | undefined;
-  guestSession?: string;
+  guestShareId?: string;
   onGuestAccessEnded?: () => void;
   user: unknown;
   location: {
@@ -64,7 +69,7 @@ const buildEmptyScene = () => ({
 
 export const useEditorSceneLoader = ({
   id,
-  guestSession,
+  guestShareId,
   onGuestAccessEnded,
   user,
   location,
@@ -133,7 +138,7 @@ export const useEditorSceneLoader = ({
             })
           : Promise.resolve([]);
         const [data, libraryItems] = await Promise.all([
-          api.getDrawing(id, ...(guestSession ? [guestSession] : [])),
+          api.getDrawing(id, ...(guestShareId ? [guestShareId] : [])),
           libraryItemsPromise,
         ]);
         if (cancelled) return;
@@ -143,11 +148,15 @@ export const useEditorSceneLoader = ({
             data.accessLevel === "edit" ||
             data.accessLevel === "owner"
             ? data.accessLevel
-            : guestSession
+            : guestShareId
               ? "none"
               : "owner",
         );
-        const rawElements = data.elements || [];
+        const rawElements = guestShareId
+          ? (data.elements || []).filter(
+              (element) => !isGuestElementTombstone(element),
+            )
+          : data.elements || [];
         // Paint first, stream images in. In S3 (or db-ref) mode the loaded
         // files carry `/api/files/...` (or public S3) references rather than
         // inline data: URLs. We no longer await re-inlining before the first
@@ -157,7 +166,14 @@ export const useEditorSceneLoader = ({
         // elements stay non-saved and show Excalidraw's own loading state until
         // their bytes arrive.
         const files: Record<string, any> = data.files || {};
-        const elements = normalizeImageElementStatus(rawElements, files);
+        const canvasFiles = guestShareId
+          ? Object.fromEntries(
+              Object.entries(files).filter(([, file]) =>
+                isInlineImageFile(file),
+              ),
+            )
+          : files;
+        const elements = normalizeImageElementStatus(rawElements, canvasFiles);
         const hasPreview =
           typeof data.preview === "string" && data.preview.trim().length > 0;
         const loadedRenderable = hasRenderableElements(elements);
@@ -181,7 +197,7 @@ export const useEditorSceneLoader = ({
         setInitialData({
           elements,
           appState: hydratedAppState,
-          files,
+          files: canvasFiles,
           scrollToContent: true,
           libraryItems,
         });
@@ -251,12 +267,12 @@ export const useEditorSceneLoader = ({
           files,
           handleFileReady,
           () => cancelled,
-          guestSession ? { drawingId: id, guestSession } : undefined,
+          guestShareId ? { drawingId: id, guestShareId } : undefined,
         );
       } catch (err) {
         if (cancelled) return;
         if (
-          guestSession &&
+          guestShareId &&
           api.isAxiosError(err) &&
           [401, 403, 404].includes(err.response?.status ?? 0)
         ) {
@@ -312,7 +328,7 @@ export const useEditorSceneLoader = ({
     };
   }, [
     id,
-    guestSession,
+    guestShareId,
     onGuestAccessEnded,
     location.hash,
     location.pathname,

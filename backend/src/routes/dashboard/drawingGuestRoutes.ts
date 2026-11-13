@@ -4,10 +4,13 @@ import { z } from "zod";
 import { config } from "../../config";
 import {
   issueGuestSession,
+  getGuestPrincipalFromCookieHeader,
+  guestSessionCookieName,
   verifyGuestPassphrase,
 } from "../../authz/guestLinkSecurity";
 import {
   hashShareLinkToken,
+  getDrawingAccess,
   normalizeDrawingPermission,
 } from "../../authz/sharing";
 import { isTrashCollectionId } from "./trash";
@@ -30,6 +33,30 @@ export const registerDrawingGuestRoutes = (
     validate: { trustProxy: false, xForwardedForHeader: false },
     message: { error: "Too many guest link attempts" },
   });
+  app.get(
+    "/guest-links/:shareId/session",
+    asyncHandler(async (req, res) => {
+      res.setHeader("Cache-Control", "no-store");
+      const principal = getGuestPrincipalFromCookieHeader(
+        req.headers.cookie,
+        req.params.shareId,
+        config.jwtSecret,
+      );
+      if (!principal) return res.sendStatus(404);
+      const permission = await getDrawingAccess({
+        prisma,
+        principal,
+        drawingId: principal.drawingId,
+      });
+      if (permission !== "view" && permission !== "edit")
+        return res.sendStatus(404);
+      return res.json({
+        drawingId: principal.drawingId,
+        expiresAt: new Date(principal.expiresAt).toISOString(),
+        permission,
+      });
+    }),
+  );
   app.post(
     "/guest-links/:shareId/unlock",
     (_req, res, next) => {
@@ -116,8 +143,16 @@ export const registerDrawingGuestRoutes = (
         }
       }
 
+      const { session, expiresAt } = issueGuestSession(share, config.jwtSecret);
+      res.cookie(guestSessionCookieName(shareId), session, {
+        httpOnly: true,
+        secure: config.nodeEnv === "production" || req.secure,
+        sameSite: "strict",
+        path: "/",
+        expires: new Date(expiresAt),
+      });
       return res.json({
-        ...issueGuestSession(share, config.jwtSecret),
+        expiresAt,
         permission,
         drawingId: share.drawingId,
       });

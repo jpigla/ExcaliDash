@@ -20,7 +20,7 @@ const UPLOAD_ATTEMPTS = 2;
 type UseEditorFileUploadsParams = {
   canEdit: boolean;
   drawingId: string | undefined;
-  guestSession?: string;
+  guestShareId?: string;
   onGuestAccessEnded?: () => void;
   isReady: boolean;
   excalidrawAPI: MutableRefObject<any>;
@@ -84,7 +84,7 @@ const runWithConcurrency = async (
 export const useEditorFileUploads = ({
   canEdit,
   drawingId,
-  guestSession,
+  guestShareId,
   onGuestAccessEnded,
   isReady,
   excalidrawAPI,
@@ -112,7 +112,7 @@ export const useEditorFileUploads = ({
     if (
       !canEditRef.current ||
       !drawingId ||
-      (!guestSession && !isFileUploadSupported())
+      (!guestShareId && !isFileUploadSupported())
     )
       return;
     const editor = excalidrawAPI.current;
@@ -188,7 +188,7 @@ export const useEditorFileUploads = ({
             parsed.bytes,
             (typeof file?.mimeType === "string" && file.mimeType) ||
               parsed.mimeType,
-            guestSession,
+            guestShareId,
           );
           // null => backend lacks the endpoint; stop trying for the session.
           if (result && isCurrent()) uploadedRefs.current[id] = result.url;
@@ -199,7 +199,7 @@ export const useEditorFileUploads = ({
             ? error.response?.status
             : undefined;
           if (
-            guestSession &&
+            guestShareId &&
             status &&
             status >= 400 &&
             status < 500 &&
@@ -236,7 +236,7 @@ export const useEditorFileUploads = ({
   }, [
     drawingId,
     excalidrawAPI,
-    guestSession,
+    guestShareId,
     isSyncing,
     latestFiles,
     onGuestAccessEnded,

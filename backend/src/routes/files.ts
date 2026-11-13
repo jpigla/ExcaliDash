@@ -33,10 +33,16 @@ import {
   getDrawingAccess,
   type DrawingPrincipal,
 } from "../authz/sharing";
+import { isGuestRequest, readGuestRequest } from "../authz/guestLinkSecurity";
 import {
-  hasGuestAuthorization,
-  readGuestAuthorization,
-} from "../authz/guestLinkSecurity";
+  admitGuestUpload,
+  checkGuestUploadQuota,
+  guestUploadMetadata,
+  GuestUploadLimitError,
+  discardGuestS3Upload,
+} from "../guestUploadPolicy";
+import { guestAccessEnded } from "./dashboard/drawingGuestLock";
+import { guestSceneFileIds } from "./dashboard/drawingGuestResponse";
 import { lockDrawingForGuestAccess } from "./dashboard/drawingGuestLock";
 
 const DOWNLOAD_EXPIRES_IN = 3600; // 1 hour   – cached by browser
@@ -64,9 +70,8 @@ export const registerFileRoutes = (
 ): void => {
   const { prisma, requireAuth, optionalAuth, asyncHandler } = deps;
   const getPrincipal = (req: express.Request): DrawingPrincipal | null => {
-    const header = req.headers.authorization;
-    if (hasGuestAuthorization(header)) {
-      return readGuestAuthorization(header, config.jwtSecret);
+    if (isGuestRequest(req)) {
+      return readGuestRequest(req, config.jwtSecret);
     }
     return req.user?.id ? { kind: "user", userId: req.user.id } : null;
   };
@@ -74,7 +79,7 @@ export const registerFileRoutes = (
   const authenticateFileRequest =
     (accountAuth: express.RequestHandler): express.RequestHandler =>
     (req, res, next) => {
-      if (hasGuestAuthorization(req.headers.authorization)) {
+      if (isGuestRequest(req)) {
         res.setHeader("Cache-Control", "no-store");
         return next();
       }
@@ -92,6 +97,20 @@ export const registerFileRoutes = (
       !canEditDrawing(await getDrawingAccess({ prisma, principal, drawingId }))
     ) {
       return res.status(404).json({ error: "Drawing not found" });
+    }
+    if (principal?.kind === "guest") {
+      try {
+        await admitGuestUpload(prisma, principal);
+      } catch (error) {
+        if (error instanceof GuestUploadLimitError) {
+          return res
+            .status(error.status)
+            .json({ error: error.message, code: error.code });
+        }
+        if (error === guestAccessEnded)
+          return res.status(404).json({ error: "Drawing not found" });
+        throw error;
+      }
     }
     next();
   });
@@ -184,7 +203,17 @@ export const registerFileRoutes = (
           ) {
             return null;
           }
-          return storeDrawingFileOnce(tx, content);
+          await checkGuestUploadQuota(
+            tx,
+            principal,
+            drawingId,
+            fileId,
+            content.sizeBytes ?? 0,
+          );
+          return storeDrawingFileOnce(tx, {
+            ...content,
+            ...guestUploadMetadata(principal.shareId),
+          });
         });
       };
 
@@ -228,55 +257,98 @@ export const registerFileRoutes = (
         return res.status(200).json({ url: responseUrl, fileId });
       }
 
-      if (isS3Enabled()) {
-        // Collaborators may upload, but storage listing and drawing cleanup
-        // use the drawing owner's namespace, just like inline scene files.
-        const drawing = await prisma.drawing.findUnique({
-          where: { id: drawingId },
-          select: { userId: true },
-        });
-        if (!drawing) {
-          return res.status(404).json({ error: "Drawing not found" });
+      try {
+        if (isS3Enabled()) {
+          if (principal.kind === "guest") {
+            await checkGuestUploadQuota(
+              prisma,
+              principal,
+              drawingId,
+              fileId,
+              body.length,
+            );
+          }
+          // Collaborators may upload, but storage listing and drawing cleanup
+          // use the drawing owner's namespace, just like inline scene files.
+          const drawing = await prisma.drawing.findUnique({
+            where: { id: drawingId },
+            select: { userId: true },
+          });
+          if (!drawing) {
+            return res.status(404).json({ error: "Drawing not found" });
+          }
+          const ext = MIME_TO_EXT[mimeType] ?? "bin";
+          const s3Key = buildS3Key(
+            drawing.userId,
+            drawingId,
+            fileId,
+            ext,
+            randomUUID(),
+          );
+          await uploadBuffer(s3Key, body, mimeType);
+          const stored = await persistFile({
+            drawingId,
+            fileId,
+            mimeType,
+            sizeBytes: body.length,
+            storage: "s3",
+            s3Key,
+            data: null,
+          }).catch(async (error) => {
+            if (
+              error instanceof GuestUploadLimitError ||
+              error === guestAccessEnded
+            ) {
+              await discardGuestS3Upload(prisma, {
+                drawingId,
+                s3Key,
+                sizeBytes: body.length,
+              });
+            }
+            throw error;
+          });
+          if (principal.kind === "guest") {
+            if (stored?.s3Key !== s3Key) {
+              await discardGuestS3Upload(prisma, {
+                drawingId,
+                s3Key,
+                sizeBytes: body.length,
+              });
+            }
+          } else {
+            await cleanupUnusedS3Upload(
+              s3Key,
+              stored ?? { storage: "none", s3Key: null },
+            );
+          }
+          if (!stored)
+            return res.status(404).json({ error: "Drawing not found" });
+          return res.status(200).json({ url: responseUrl, fileId });
         }
-        const ext = MIME_TO_EXT[mimeType] ?? "bin";
-        const s3Key = buildS3Key(
-          drawing.userId,
-          drawingId,
-          fileId,
-          ext,
-          randomUUID(),
-        );
-        await uploadBuffer(s3Key, body, mimeType);
+
+        // Database-bytes mode: persist the raw bytes inline.
         const stored = await persistFile({
           drawingId,
           fileId,
           mimeType,
           sizeBytes: body.length,
-          storage: "s3",
-          s3Key,
-          data: null,
+          storage: "db",
+          s3Key: null,
+          data: body,
         });
-        await cleanupUnusedS3Upload(
-          s3Key,
-          stored ?? { storage: "none", s3Key: null },
-        );
         if (!stored)
           return res.status(404).json({ error: "Drawing not found" });
         return res.status(200).json({ url: responseUrl, fileId });
+      } catch (error) {
+        if (error instanceof GuestUploadLimitError) {
+          return res
+            .status(error.status)
+            .json({ error: error.message, code: error.code });
+        }
+        if (error === guestAccessEnded)
+          return res.status(404).json({ error: "Drawing not found" });
+        throw error;
       }
-
-      // Database-bytes mode: persist the raw bytes inline.
-      const stored = await persistFile({
-        drawingId,
-        fileId,
-        mimeType,
-        sizeBytes: body.length,
-        storage: "db",
-        s3Key: null,
-        data: body,
-      });
-      if (!stored) return res.status(404).json({ error: "Drawing not found" });
-      return res.status(200).json({ url: responseUrl, fileId });
     }),
   );
 
@@ -310,6 +382,28 @@ export const registerFileRoutes = (
         return res.status(404).json({ error: "File not found" });
       }
 
+      const canReadGuestFile = async () => {
+        if (principal?.kind !== "guest") return false;
+        const drawing = await prisma.drawing.findUnique({
+          where: { id: drawingId },
+          select: { elements: true },
+        });
+        let visible = false;
+        try {
+          visible = guestSceneFileIds(
+            JSON.parse(drawing?.elements ?? "[]"),
+          ).has(fileId);
+        } catch {
+          // Treat an invalid stored scene as having no visible attachments.
+        }
+        return (
+          visible &&
+          canViewDrawing(
+            await getDrawingAccess({ prisma, principal, drawingId }),
+          )
+        );
+      };
+
       const isScriptableType = !isGuestImageType(fileRecord.mimeType);
       const setFileHeaders = () => {
         res.setHeader("Content-Type", fileRecord.mimeType);
@@ -321,11 +415,7 @@ export const registerFileRoutes = (
         // Do not hand guests a presigned URL that would outlive their access.
         // Stream via the app so each request checks the share again.
         if (fileRecord.storage === "db" && fileRecord.data) {
-          if (
-            !canViewDrawing(
-              await getDrawingAccess({ prisma, principal, drawingId }),
-            )
-          ) {
+          if (!(await canReadGuestFile())) {
             return res.status(404).json({ error: "File not found" });
           }
           setFileHeaders();
@@ -338,12 +428,11 @@ export const registerFileRoutes = (
         ) {
           return res.status(404).json({ error: "File not found" });
         }
+        if (!(await canReadGuestFile())) {
+          return res.status(404).json({ error: "File not found" });
+        }
         const stream = await downloadDrawingFileStream(fileRecord.s3Key);
-        if (
-          !canViewDrawing(
-            await getDrawingAccess({ prisma, principal, drawingId }),
-          )
-        ) {
+        if (!(await canReadGuestFile())) {
           stream.destroy();
           return res.status(404).json({ error: "File not found" });
         }

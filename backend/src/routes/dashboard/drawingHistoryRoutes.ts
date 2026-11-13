@@ -4,7 +4,7 @@ import {
   canViewDrawing,
   getDrawingAccess,
 } from "../../authz/sharing";
-import { hasGuestAuthorization } from "../../authz/guestLinkSecurity";
+import { isGuestRequest } from "../../authz/guestLinkSecurity";
 import { decodeSnapshotField } from "../../snapshots/snapshotCodec";
 import { applySceneUpdateTx, isVersionConflict } from "./sceneUpdate";
 import type { DrawingRouteContext } from "./drawingRouteContext";
@@ -31,7 +31,7 @@ export const registerDrawingHistoryRoutes = (
     "/drawings/:id/history",
     optionalAuth,
     asyncHandler(async (req, res) => {
-      if (hasGuestAuthorization(req.headers.authorization)) {
+      if (isGuestRequest(req)) {
         return res.status(404).json({ error: "Drawing not found" });
       }
       const principal = await getRequestPrincipal(req);
@@ -81,7 +81,7 @@ export const registerDrawingHistoryRoutes = (
     "/drawings/:id/history/:snapshotId",
     optionalAuth,
     asyncHandler(async (req, res) => {
-      if (hasGuestAuthorization(req.headers.authorization)) {
+      if (isGuestRequest(req)) {
         return res.status(404).json({ error: "Drawing not found" });
       }
       const principal = await getRequestPrincipal(req);
@@ -116,7 +116,7 @@ export const registerDrawingHistoryRoutes = (
     "/drawings/:id/history/:snapshotId/restore",
     optionalAuth,
     asyncHandler(async (req, res) => {
-      if (hasGuestAuthorization(req.headers.authorization)) {
+      if (isGuestRequest(req)) {
         return res.status(404).json({ error: "Drawing not found" });
       }
       const principal = await getRequestPrincipal(req);

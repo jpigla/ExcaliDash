@@ -6,31 +6,22 @@ import {
   type ReactNode,
 } from "react";
 import {
+  getGuestLinkSession,
   isAxiosError,
   unlockGuestLink,
   type GuestLinkSession,
 } from "../../api";
 
-const storageKey = (shareId: string) => `excalidash-guest-link:${shareId}`;
-
-const readSession = (
-  shareId: string,
-  drawingId: string,
-): GuestLinkSession | null => {
+const clearLegacyGuestSessions = () => {
   try {
-    const stored = JSON.parse(
-      localStorage.getItem(storageKey(shareId)) || "null",
-    ) as GuestLinkSession | null;
-    if (
-      stored?.drawingId === drawingId &&
-      typeof stored.session === "string" &&
-      Date.parse(stored.expiresAt) > Date.now()
-    )
-      return stored;
+    for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+      const key = localStorage.key(index);
+      if (key?.startsWith("excalidash-guest-link:"))
+        localStorage.removeItem(key);
+    }
   } catch {
-    // A blocked storage API still allows using the link in this tab.
+    // The browser can block local storage independently of this request.
   }
-  return null;
 };
 
 export const GuestLinkGate = ({
@@ -42,9 +33,9 @@ export const GuestLinkGate = ({
   drawingId: string;
   shareId: string;
   token: string;
-  children: (session: string, onAccessEnded: () => void) => ReactNode;
+  children: (shareId: string, onAccessEnded: () => void) => ReactNode;
 }) => {
-  const [session, setSession] = useState(() => readSession(shareId, drawingId));
+  const [session, setSession] = useState<GuestLinkSession | null>(null);
   const [passwordRequired, setPasswordRequired] = useState(false);
   const [accessEnded, setAccessEnded] = useState(false);
   const [passphrase, setPassphrase] = useState("");
@@ -66,11 +57,6 @@ export const GuestLinkGate = ({
         if (result.drawingId !== drawingId) {
           setError("This guest link is unavailable.");
           return;
-        }
-        try {
-          localStorage.setItem(storageKey(shareId), JSON.stringify(result));
-        } catch {
-          // In private browsing the session can still be used in memory.
         }
         setPassphrase("");
         setPasswordRequired(false);
@@ -102,33 +88,40 @@ export const GuestLinkGate = ({
   );
 
   const endAccess = useCallback(() => {
-    try {
-      const key = storageKey(shareId);
-      // A different tab may already have renewed this session.
-      if (localStorage.getItem(key) === JSON.stringify(session)) {
-        localStorage.removeItem(key);
-      }
-    } catch {
-      // No stored session to clear.
-    }
     setSession(null);
     setAccessEnded(true);
     setPasswordRequired(false);
     setError("Your access to this drawing has ended.");
-  }, [session, shareId]);
+  }, []);
 
   useEffect(() => {
-    if (session || accessEnded) return;
+    clearLegacyGuestSessions();
     let cancelled = false;
-    const pending = window.setTimeout(
-      () => void open(undefined, () => cancelled),
-      0,
-    );
+    const restore = async () => {
+      try {
+        const result = await getGuestLinkSession(shareId);
+        if (cancelled) return;
+        if (result.drawingId !== drawingId) {
+          setError("This guest link is unavailable.");
+          return;
+        }
+        setSession(result);
+      } catch (cause) {
+        if (cancelled) return;
+        const status = isAxiosError(cause) ? cause.response?.status : undefined;
+        if (status === 401 || status === 403 || status === 404) {
+          await open(undefined, () => cancelled);
+        } else {
+          setError("Could not open the guest link. Try again.");
+        }
+      }
+    };
+    const pending = window.setTimeout(() => void restore(), 0);
     return () => {
       cancelled = true;
       window.clearTimeout(pending);
     };
-  }, [accessEnded, open, session]);
+  }, [drawingId, open, shareId]);
 
   useEffect(() => {
     if (!session) return;
@@ -151,7 +144,7 @@ export const GuestLinkGate = ({
     void open(passphrase);
   };
 
-  if (session) return children(session.session, endAccess);
+  if (session) return children(shareId, endAccess);
 
   return (
     <main className="grid min-h-screen place-items-center bg-slate-50 p-4 dark:bg-neutral-950">

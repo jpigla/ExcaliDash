@@ -1,4 +1,4 @@
-import { API_URL, getCsrfHeader, guestAuthorization } from "../../api";
+import { API_URL, getCsrfHeader, guestShareHeaders } from "../../api";
 
 /**
  * Fire a best-effort scene save that survives page unload.
@@ -14,14 +14,14 @@ import { API_URL, getCsrfHeader, guestAuthorization } from "../../api";
 export const saveDrawingKeepalive = (
   drawingId: string,
   body: Record<string, unknown>,
-  guestSession?: string,
+  guestShareId?: string,
 ): boolean => {
   if (!drawingId || typeof fetch !== "function") return false;
   try {
     const csrf = getCsrfHeader();
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      ...guestAuthorization(guestSession),
+      ...guestShareHeaders(guestShareId),
     };
     if (csrf) headers[csrf.name] = csrf.token;
     void fetch(`${API_URL}/drawings/${drawingId}`, {

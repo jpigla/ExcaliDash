@@ -45,7 +45,7 @@ type UseEditorCommandsParams = {
   canEdit: boolean;
   debouncedSaveLibrary: (items: any[]) => void;
   drawingId: string | undefined;
-  guestSession?: string;
+  guestShareId?: string;
   drawingName: string;
   isSavingOnLeave: boolean;
   newName: string;
@@ -77,7 +77,7 @@ export const useEditorCommands = ({
   canEdit,
   debouncedSaveLibrary,
   drawingId,
-  guestSession,
+  guestShareId,
   drawingName,
   enqueueSceneSave,
   isSavingOnLeave,
@@ -159,12 +159,12 @@ export const useEditorCommands = ({
           files: applyUploadedFileRefs(files, refs.uploadedRefs.current),
           version: refs.currentDrawingVersion.current ?? undefined,
         },
-        ...(guestSession ? [guestSession] : []),
+        ...(guestShareId ? [guestShareId] : []),
       );
     };
     window.addEventListener("pagehide", handlePageHide);
     return () => window.removeEventListener("pagehide", handlePageHide);
-  }, [canEdit, drawingId, guestSession, refs, resolveSafeSnapshot]);
+  }, [canEdit, drawingId, guestShareId, refs, resolveSafeSnapshot]);
 
   const handleRenameSubmit = useCallback(
     async (e: FormEvent) => {

@@ -1,6 +1,7 @@
 import type { MutableRefObject } from "react";
 import * as api from "../../api";
 import { reconcileElements } from "../../utils/sync";
+import { expandGuestElementTombstone, isInlineImageFile } from "./shared";
 import {
   filesNeedRehydration,
   rehydrateFilesFromUrls,
@@ -28,12 +29,12 @@ export const reloadAndReconcile = async (
   localElements: readonly any[],
   localFiles: Record<string, any>,
   isCurrent: () => boolean = () => true,
-  guestSession?: string,
+  guestShareId?: string,
 ): Promise<{ elements: readonly any[]; files: Record<string, any> } | null> => {
   if (!isCurrent()) return null;
   const remote = await api.getDrawing(
     drawingId,
-    ...(guestSession ? [guestSession] : []),
+    ...(guestShareId ? [guestShareId] : []),
   );
   if (!isCurrent()) return null;
   const storedRemoteFiles =
@@ -41,16 +42,27 @@ export const reloadAndReconcile = async (
   const remoteFiles = filesNeedRehydration(storedRemoteFiles)
     ? await rehydrateFilesFromUrls(
         storedRemoteFiles,
-        guestSession ? { drawingId, guestSession } : undefined,
+        guestShareId ? { drawingId, guestShareId } : undefined,
       )
     : storedRemoteFiles;
   if (!isCurrent()) return null;
   const editor = refs.excalidrawAPI.current;
   const liveElements =
     editor?.getSceneElementsIncludingDeleted?.() ?? refs.latestElements.current;
-  const remoteElements = Array.isArray(remote.elements) ? remote.elements : [];
+  const mergedLocal = reconcileElements(localElements, liveElements);
+  let remoteElements = Array.isArray(remote.elements) ? remote.elements : [];
+  if (guestShareId) {
+    const localById = new Map(
+      mergedLocal.map((element) => [element.id, element]),
+    );
+    remoteElements = remoteElements
+      .map((element: any) =>
+        expandGuestElementTombstone(element, localById.get(element.id)),
+      )
+      .filter(Boolean);
+  }
   const mergedElements = reconcileElements(
-    reconcileElements(localElements, liveElements),
+    mergedLocal,
     remoteElements,
     editor?.getAppState?.(),
     true,
@@ -71,7 +83,11 @@ export const reloadAndReconcile = async (
     refs.isSyncing.current = true;
     try {
       if (typeof editor.addFiles === "function") {
-        editor.addFiles(Object.values(mergedFiles));
+        editor.addFiles(
+          guestShareId
+            ? Object.values(mergedFiles).filter(isInlineImageFile)
+            : Object.values(mergedFiles),
+        );
       }
       if (typeof editor.updateScene === "function") {
         editor.updateScene({

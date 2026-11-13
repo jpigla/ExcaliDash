@@ -16,6 +16,9 @@ type FileContent = Pick<
   | "storage"
   | "s3Key"
   | "data"
+  | "guestShareId"
+  | "guestOrphanCheckAt"
+  | "createdAt"
 >;
 
 /** Store an immutable file id without replacing a concurrent winner's bytes. */

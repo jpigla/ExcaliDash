@@ -205,6 +205,7 @@ export const registerAccountPasswordChangeRoutes = (
         const { accessToken, refreshToken } = generateTokens(
           updatedUser.id,
           updatedUser.email,
+          { authProvider: req.user.authProvider },
         );
         setAuthCookies(req, res, { accessToken, refreshToken });
         if (config.enableRefreshTokenRotation) {

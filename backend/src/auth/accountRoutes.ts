@@ -29,7 +29,6 @@ export type RegisterAccountRoutesDeps = {
     options?: {
       impersonatorId?: string;
       authProvider?: "local" | "oidc";
-      oidcGroups?: string[];
     },
   ) => { accessToken: string; refreshToken: string };
   getRefreshTokenExpiresAt: () => Date;

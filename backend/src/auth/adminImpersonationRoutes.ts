@@ -134,7 +134,10 @@ export const registerAdminImpersonationRoutes = (
         const { accessToken, refreshToken } = generateTokens(
           target.id,
           target.email,
-          { impersonatorId: actingAdmin.id },
+          {
+            impersonatorId: actingAdmin.id,
+            authProvider: req.user.authProvider,
+          },
         );
         setAuthCookies(req, res, { accessToken, refreshToken });
         if (config.enableRefreshTokenRotation) {

@@ -27,6 +27,7 @@ declare global {
         role: string;
         mustResetPassword?: boolean;
         impersonatorId?: string;
+        authProvider?: "local" | "oidc";
         authCredentialType?: "jwt" | "apiKey" | "bootstrap";
       };
       principal?: { kind: "user"; userId: string };
@@ -41,10 +42,7 @@ interface JwtPayload {
   type: "access" | "refresh";
   impersonatorId?: string;
   authProvider?: "local" | "oidc";
-  oidcGroups?: string[];
 }
-const isStringArray = (value: unknown): value is string[] =>
-  Array.isArray(value) && value.every((entry) => typeof entry === "string");
 const isJwtPayload = (decoded: unknown): decoded is JwtPayload => {
   if (typeof decoded !== "object" || decoded === null) {
     return false;
@@ -57,16 +55,12 @@ const isJwtPayload = (decoded: unknown): decoded is JwtPayload => {
     typeof payload.authProvider === "undefined" ||
     payload.authProvider === "local" ||
     payload.authProvider === "oidc";
-  const oidcGroupsOk =
-    typeof payload.oidcGroups === "undefined" ||
-    isStringArray(payload.oidcGroups);
   return (
     typeof payload.userId === "string" &&
     typeof payload.email === "string" &&
     (payload.type === "access" || payload.type === "refresh") &&
     impersonatorOk &&
-    authProviderOk &&
-    oidcGroupsOk
+    authProviderOk
   );
 };
 const extractToken = (
@@ -180,15 +174,6 @@ export const createAuthMiddleware = ({
   prisma,
   authModeService,
 }: AuthMiddlewareDeps) => {
-  const configuredOidcAdminGroups = new Set(config.oidc.adminGroups);
-  const normalizeGroups = (groups: string[] | undefined): string[] =>
-    Array.from(
-      new Set(
-        (groups ?? [])
-          .map((group) => group.trim())
-          .filter((group) => group.length > 0),
-      ),
-    );
   const findActiveUser = (userId: string) =>
     prisma.user.findUnique({
       where: { id: userId },
@@ -225,57 +210,6 @@ export const createAuthMiddleware = ({
       scopes: parseApiKeyScopes(apiKey.scopes),
       drawingId: apiKey.drawingId ?? null,
     };
-  };
-  const shouldReconcileOidcRole = async (
-    payload: JwtPayload,
-    userId: string,
-  ): Promise<boolean> => {
-    if (configuredOidcAdminGroups.size === 0) return false;
-    if (payload.impersonatorId) return false;
-    if (payload.authProvider === "oidc") return true;
-    if (payload.authProvider === "local") return false;
-    const linkedOidcIdentity = await prisma.authIdentity.findUnique({
-      where: { provider_userId: { provider: "oidc", userId } },
-      select: { id: true },
-    });
-    return Boolean(linkedOidcIdentity);
-  };
-  const reconcileRoleFromOidcGroups = async (
-    payload: JwtPayload,
-    user: {
-      id: string;
-      username: string | null;
-      email: string;
-      name: string;
-      role: string;
-      mustResetPassword: boolean;
-      isActive: boolean;
-    },
-  ) => {
-    if (!(await shouldReconcileOidcRole(payload, user.id))) {
-      return user;
-    }
-    const oidcGroups = normalizeGroups(payload.oidcGroups);
-    const shouldBeAdmin = oidcGroups.some((group) =>
-      configuredOidcAdminGroups.has(group),
-    );
-    const expectedRole = shouldBeAdmin ? "ADMIN" : "USER";
-    if (user.role === expectedRole) {
-      return user;
-    }
-    return prisma.user.update({
-      where: { id: user.id },
-      data: { role: expectedRole },
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        name: true,
-        role: true,
-        mustResetPassword: true,
-        isActive: true,
-      },
-    });
   };
   const requireAuth = async (
     req: Request,
@@ -377,11 +311,7 @@ export const createAuthMiddleware = ({
         });
         return;
       }
-      const resolvedUser = await reconcileRoleFromOidcGroups(payload, user);
-      if (
-        resolvedUser.mustResetPassword &&
-        !isAllowedWhileMustResetPassword(req)
-      ) {
+      if (user.mustResetPassword && !isAllowedWhileMustResetPassword(req)) {
         res.status(403).json({
           error: "Forbidden",
           code: "MUST_RESET_PASSWORD",
@@ -390,16 +320,17 @@ export const createAuthMiddleware = ({
         return;
       }
       req.user = {
-        id: resolvedUser.id,
-        username: resolvedUser.username,
-        email: resolvedUser.email,
-        name: resolvedUser.name,
-        role: resolvedUser.role,
-        mustResetPassword: resolvedUser.mustResetPassword,
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        mustResetPassword: user.mustResetPassword,
         impersonatorId: payload.impersonatorId,
+        authProvider: payload.authProvider,
         authCredentialType: "jwt",
       };
-      req.principal = { kind: "user", userId: resolvedUser.id };
+      req.principal = { kind: "user", userId: user.id };
       next();
     } catch (error) {
       console.error("Error verifying user:", error);
@@ -493,6 +424,7 @@ export const createAuthMiddleware = ({
           role: user.role,
           mustResetPassword: user.mustResetPassword,
           impersonatorId: payload.impersonatorId,
+          authProvider: payload.authProvider,
           authCredentialType: "jwt",
         };
         req.principal = { kind: "user", userId: user.id };

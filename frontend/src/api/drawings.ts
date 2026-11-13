@@ -306,6 +306,18 @@ export const listLinkShares = async (drawingId: string) => {
   return response.data.shares;
 };
 
+export const revealLinkPassphrase = async (
+  drawingId: string,
+  shareId: string,
+  signal: AbortSignal,
+): Promise<string | null> => {
+  const response = await api.get<{ passphrase: string | null }>(
+    `/drawings/${drawingId}/link-shares/${shareId}/passphrase`,
+    { signal },
+  );
+  return response.data.passphrase;
+};
+
 export const createLinkShare = async (
   drawingId: string,
   params: LinkShareSettings,

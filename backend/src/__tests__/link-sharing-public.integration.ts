@@ -327,6 +327,74 @@ describe("Link Sharing - Scoped Guest Access", () => {
     expect((await unlock(share, "New-Password!")).status).toBe(200);
   });
 
+  it("only reveals an encrypted saved password to the owner on demand", async () => {
+    const drawing = await createDrawing();
+    const password = " Workshop-password! ";
+    const { body } = await createLinkShare(drawing.id, "view", {
+      passphrase: password,
+    });
+    const share = body.share;
+    const path = `/drawings/${drawing.id}/link-shares/${share.id}`;
+    const reveal = () =>
+      ownerAgent
+        .get(`${path}/passphrase`)
+        .set("Authorization", `Bearer ${ownerToken}`);
+    const update = (passphrase: string | null) =>
+      ownerAgent
+        .patch(path)
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .set(ownerCsrfHeaderName, ownerCsrfToken)
+        .send({ passphrase });
+
+    expect(JSON.stringify(body)).not.toContain(password);
+    const row = await prisma.drawingLinkShare.findUniqueOrThrow({
+      where: { id: share.id },
+    });
+    expect(row.encryptedPassphrase).toBeTruthy();
+    expect(row.encryptedPassphrase).not.toContain(password);
+    const revealed = await reveal().expect(200, { passphrase: password });
+    expect(revealed.headers["cache-control"]).toBe("no-store");
+
+    const other = await prisma.user.create({
+      data: {
+        email: "non-owner-password-reveal@test.local",
+        name: "Collaborator",
+        passwordHash: "",
+        isActive: true,
+      },
+    });
+    await prisma.drawingPermission.create({
+      data: {
+        drawingId: drawing.id,
+        granteeUserId: other.id,
+        permission: "edit",
+        createdByUserId: ownerUser.id,
+      },
+    });
+    const otherToken = jwt.sign(
+      { userId: other.id, email: other.email, type: "access" },
+      config.jwtSecret,
+    );
+    await request(app).get(`${path}/passphrase`).expect(401);
+    await request(app)
+      .get(`${path}/passphrase`)
+      .set("Authorization", `Bearer ${otherToken}`)
+      .expect(404);
+
+    await prisma.drawingLinkShare.update({
+      where: { id: share.id },
+      data: { encryptedPassphrase: null },
+    });
+    await reveal().expect(200, { passphrase: null });
+    expect((await unlock(share, password)).status).toBe(200);
+    const updated = await update(password).expect(200);
+    expect(updated.body.share.token).toBe(share.token);
+    await reveal().expect(200, { passphrase: password });
+    await update(null).expect(200);
+    await reveal().expect(404);
+    expect((await unlock(share)).status).toBe(200);
+  });
+
   it("limits password attempts for the same link without blocking another link", async () => {
     const drawing = await createDrawing();
     const protectedLink = (

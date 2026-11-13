@@ -27,18 +27,19 @@ export type GuestPrincipal = {
 const deriveKey = (secret: string, purpose: string): Buffer =>
   crypto.createHmac("sha256", secret).update(purpose).digest();
 
-export const encryptGuestLinkToken = (
-  token: string,
+const encryptGuestValue = (
+  value: string,
   secret: string,
+  purpose: string,
 ): string => {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv(
     "aes-256-gcm",
-    deriveKey(secret, "guest-link-encryption"),
+    deriveKey(secret, purpose),
     iv,
   );
   const ciphertext = Buffer.concat([
-    cipher.update(token, "utf8"),
+    cipher.update(value, "utf8"),
     cipher.final(),
   ]);
   return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString(
@@ -46,14 +47,15 @@ export const encryptGuestLinkToken = (
   );
 };
 
-export const decryptGuestLinkToken = (
+const decryptGuestValue = (
   encrypted: string,
   secret: string,
+  purpose: string,
 ): string => {
   const data = Buffer.from(encrypted, "base64url");
   const decipher = crypto.createDecipheriv(
     "aes-256-gcm",
-    deriveKey(secret, "guest-link-encryption"),
+    deriveKey(secret, purpose),
     data.subarray(0, 12),
   );
   decipher.setAuthTag(data.subarray(12, 28));
@@ -62,6 +64,16 @@ export const decryptGuestLinkToken = (
     decipher.final(),
   ]).toString("utf8");
 };
+
+export const encryptGuestLinkToken = (value: string, secret: string) =>
+  encryptGuestValue(value, secret, "guest-link-encryption");
+export const decryptGuestLinkToken = (value: string, secret: string) =>
+  decryptGuestValue(value, secret, "guest-link-encryption");
+
+export const encryptGuestPassphrase = (value: string, secret: string) =>
+  encryptGuestValue(value, secret, "guest-link-passphrase");
+export const decryptGuestPassphrase = (value: string, secret: string) =>
+  decryptGuestValue(value, secret, "guest-link-passphrase");
 
 export const isValidGuestPassphrase = (value: string): boolean =>
   value.trim().length >= 8 &&

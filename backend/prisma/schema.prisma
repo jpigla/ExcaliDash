@@ -150,25 +150,26 @@ model DrawingPermission {
 }
 
 model DrawingLinkShare {
-  id              String    @id @default(uuid())
-  drawingId       String
-  drawing         Drawing   @relation(fields: [drawingId], references: [id], onDelete: Cascade)
-  permission      String
-  tokenHash       String    @unique
-  encryptedToken  String?
-  revision        Int       @default(0)
-  passphraseHash  String?
-  expiresAt       DateTime?
-  revokedAt       DateTime?
-  failedAttempts  Int       @default(0)
-  lockedUntil     DateTime?
-  lastUsedAt      DateTime?
-  lastUsedIp      String?
-  uploadWindowAt  DateTime?
-  uploadCount     Int       @default(0)
-  createdByUserId String
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id                  String    @id @default(uuid())
+  drawingId           String
+  drawing             Drawing   @relation(fields: [drawingId], references: [id], onDelete: Cascade)
+  permission          String
+  tokenHash           String    @unique
+  encryptedToken      String?
+  revision            Int       @default(0)
+  passphraseHash      String?
+  encryptedPassphrase String?
+  expiresAt           DateTime?
+  revokedAt           DateTime?
+  failedAttempts      Int       @default(0)
+  lockedUntil         DateTime?
+  lastUsedAt          DateTime?
+  lastUsedIp          String?
+  uploadWindowAt      DateTime?
+  uploadCount         Int       @default(0)
+  createdByUserId     String
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   @@index([drawingId])
 }

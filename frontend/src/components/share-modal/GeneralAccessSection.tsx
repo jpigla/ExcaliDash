@@ -1,9 +1,10 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Copy, KeyRound, Plus } from "lucide-react";
 import {
   createLinkShare,
   updateLinkShare,
   revokeLinkShare,
+  revealLinkPassphrase,
   isAxiosError,
   type DrawingLinkShareRow,
   type LinkShareSettings,
@@ -203,7 +204,7 @@ const LinkSettingsForm = ({
             </div>
             {passphrase && (
               <p className="text-xs text-slate-500 dark:text-neutral-400">
-                Save the password before closing this form.
+                You can reveal the password from the link list after saving.
               </p>
             )}
           </div>
@@ -230,6 +231,78 @@ const LinkSettingsForm = ({
         </div>
       </fieldset>
     </form>
+  );
+};
+
+const SavedLinkPassword = ({
+  drawingId,
+  shareId,
+}: {
+  drawingId: string;
+  shareId: string;
+}) => {
+  const [password, setPassword] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+  const request = useRef<AbortController | null>(null);
+
+  useEffect(() => () => request.current?.abort(), []);
+
+  const toggle = async () => {
+    setMessage("");
+    if (password !== null) {
+      setPassword(null);
+      return;
+    }
+    const controller = new AbortController();
+    request.current = controller;
+    setLoading(true);
+    try {
+      const value = await revealLinkPassphrase(
+        drawingId,
+        shareId,
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
+      setPassword(value);
+      if (value === null) {
+        setMessage(
+          "This password cannot be shown. Set it again under Edit to make it available here.",
+        );
+      }
+    } catch {
+      if (!controller.signal.aborted)
+        setMessage("Could not show the password.");
+    } finally {
+      if (!controller.signal.aborted) setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <button
+        className="ui-button-secondary px-2 py-1 text-xs"
+        type="button"
+        disabled={loading}
+        onClick={() => void toggle()}
+      >
+        {password === null ? "Show saved password" : "Hide saved password"}
+      </button>
+      {password !== null && (
+        <input
+          className={inputClass}
+          aria-label="Saved guest link password"
+          readOnly
+          value={password}
+          onFocus={(event) => event.currentTarget.select()}
+        />
+      )}
+      {message && (
+        <p role="status" className="text-xs">
+          {message}
+        </p>
+      )}
+    </div>
   );
 };
 
@@ -433,6 +506,14 @@ export const GeneralAccessSection = ({
                     </button>
                   </div>
                 )}
+                {share.passwordProtected &&
+                  !share.revokedAt &&
+                  editing !== share.id && (
+                    <SavedLinkPassword
+                      drawingId={drawingId}
+                      shareId={share.id}
+                    />
+                  )}
                 {editing === share.id && (
                   <LinkSettingsForm
                     key={share.id}

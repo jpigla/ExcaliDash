@@ -202,6 +202,73 @@ describe("Import compatibility (legacy exports)", () => {
     expect(String(res.body.message || "")).toContain("Duplicate drawing id");
   });
 
+  // Falsify the central directory's expanded size. The decompressor must stop
+  // at the application budget before JSZip reaches its end-of-entry size check.
+  const understateExpandedSize = (archive: Buffer) => {
+    const centralDirectory = archive.readUInt32LE(archive.length - 6);
+    expect(archive.readUInt32LE(centralDirectory)).toBe(0x02014b50);
+    archive.writeUInt32LE(1, centralDirectory + 24);
+    return archive;
+  };
+
+  it.each(["/import/excalidash/verify", "/import/excalidash"])(
+    "rejects an over-budget compressed manifest at %s even with a forged size",
+    async (url) => {
+      const zip = new JSZip();
+      zip.file("excalidash.manifest.json", " ".repeat(4 * 1024 * 1024));
+      const archive = understateExpandedSize(
+        await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }),
+      );
+      const res = await agent
+        .post(url)
+        .set("User-Agent", userAgent)
+        .set(csrfHeaderName, csrfToken)
+        .attach("archive", archive, "oversized-manifest.excalidash");
+
+      expect(archive.length).toBeLessThan(8192);
+      expect(res.status).toBe(400);
+      expect(res.body.message).toBe("excalidash.manifest.json is too large");
+    },
+  );
+
+  it("rejects an oversized drawing before expanding the rest of its ZIP entry", async () => {
+    const zip = new JSZip();
+    zip.file("drawing.excalidraw", Buffer.alloc(121 * 1024 * 1024, 32));
+    zip.file(
+      "excalidash.manifest.json",
+      JSON.stringify({
+        format: "excalidash",
+        formatVersion: 1,
+        exportedAt: new Date().toISOString(),
+        unorganizedFolder: "Unorganized",
+        collections: [],
+        drawings: [
+          {
+            id: "oversized-drawing",
+            name: "Oversized drawing",
+            filePath: "drawing.excalidraw",
+            collectionId: null,
+          },
+        ],
+      }),
+    );
+    const archive = understateExpandedSize(
+      await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }),
+    );
+    const res = await agent
+      .post("/import/excalidash")
+      .set("User-Agent", userAgent)
+      .set(csrfHeaderName, csrfToken)
+      .attach("archive", archive, "oversized-drawing.excalidash");
+
+    expect(archive.length).toBeLessThan(128 * 1024);
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(
+      /Drawing is too large|maximum import size/,
+    );
+    expect(await prisma.drawing.count()).toBe(0);
+  });
+
   it("imports a backup whose drawing JSON exceeds the former 5 MiB limit", async () => {
     const archive = await createExcalidashArchiveWithLargeDrawing();
     const res = await agent

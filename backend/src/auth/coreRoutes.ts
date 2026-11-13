@@ -57,7 +57,6 @@ type RegisterCoreRoutesDeps = {
     type: "access" | "refresh";
     impersonatorId?: string;
     authProvider?: "local" | "oidc";
-    oidcGroups?: string[];
   };
   config: {
     authMode: "local" | "hybrid" | "oidc_enforced" | "disabled";
@@ -70,6 +69,7 @@ type RegisterCoreRoutesDeps = {
       enforced: boolean;
       providerName: string;
       jitProvisioning: boolean;
+      adminGroups: string[];
     };
     bootstrapSetupCodeTtlMs: number;
     bootstrapSetupCodeMaxAttempts: number;
@@ -88,7 +88,6 @@ type RegisterCoreRoutesDeps = {
     options?: {
       impersonatorId?: string;
       authProvider?: "local" | "oidc";
-      oidcGroups?: string[];
     },
   ) => { accessToken: string; refreshToken: string };
   getRefreshTokenExpiresAt: () => Date;
@@ -617,13 +616,36 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
             message: "User account not found or inactive",
           });
         }
+        // Group-based grants need a fresh provider login. Legacy tokens
+        // without a provider and impersonation tokens are checked against the
+        // linked identity of the account that originally authenticated.
+        if (config.oidc.enabled && config.oidc.adminGroups.length > 0) {
+          const linkedIdentity =
+            decoded.authProvider === undefined || decoded.impersonatorId
+              ? await prisma.authIdentity.findUnique({
+                  where: {
+                    provider_userId: {
+                      provider: "oidc",
+                      userId: decoded.impersonatorId ?? user.id,
+                    },
+                  },
+                  select: { id: true },
+                })
+              : null;
+          if (decoded.authProvider === "oidc" || linkedIdentity) {
+            clearAuthCookies(req, res);
+            return res.status(401).json({
+              error: "Unauthorized",
+              message: "Sign in again with your identity provider",
+            });
+          }
+        }
         if (config.enableRefreshTokenRotation) {
           try {
             const { accessToken, refreshToken: newRefreshToken } =
               generateTokens(user.id, user.email, {
                 impersonatorId: decoded.impersonatorId,
                 authProvider: decoded.authProvider,
-                oidcGroups: decoded.oidcGroups,
               });
             const expiresAt = getRefreshTokenExpiresAt();
             await prisma.$transaction(async (tx) => {
@@ -698,7 +720,6 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
             type: "access",
             impersonatorId: decoded.impersonatorId,
             authProvider: decoded.authProvider,
-            oidcGroups: decoded.oidcGroups,
           },
           config.jwtSecret,
           signOptions,
@@ -779,9 +800,22 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
               "Impersonator account is unavailable or no longer authorized",
           });
         }
+        const linkedIdentity =
+          config.oidc.enabled && config.oidc.adminGroups.length > 0
+            ? await prisma.authIdentity.findUnique({
+                where: {
+                  provider_userId: {
+                    provider: "oidc",
+                    userId: impersonator.id,
+                  },
+                },
+                select: { id: true },
+              })
+            : null;
         const { accessToken, refreshToken } = generateTokens(
           impersonator.id,
           impersonator.email,
+          { authProvider: linkedIdentity ? "oidc" : req.user.authProvider },
         );
         setAuthCookies(req, res, { accessToken, refreshToken });
         if (config.enableRefreshTokenRotation) {

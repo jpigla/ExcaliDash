@@ -155,6 +155,8 @@ model DrawingLinkShare {
   drawing         Drawing   @relation(fields: [drawingId], references: [id], onDelete: Cascade)
   permission      String
   tokenHash       String    @unique
+  encryptedToken  String?
+  revision        Int       @default(0)
   passphraseHash  String?
   expiresAt       DateTime?
   revokedAt       DateTime?

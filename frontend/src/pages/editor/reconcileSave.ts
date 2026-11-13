@@ -28,14 +28,21 @@ export const reloadAndReconcile = async (
   localElements: readonly any[],
   localFiles: Record<string, any>,
   isCurrent: () => boolean = () => true,
+  guestSession?: string,
 ): Promise<{ elements: readonly any[]; files: Record<string, any> } | null> => {
   if (!isCurrent()) return null;
-  const remote = await api.getDrawing(drawingId);
+  const remote = await api.getDrawing(
+    drawingId,
+    ...(guestSession ? [guestSession] : []),
+  );
   if (!isCurrent()) return null;
   const storedRemoteFiles =
     (remote.files as Record<string, any> | undefined) || {};
   const remoteFiles = filesNeedRehydration(storedRemoteFiles)
-    ? await rehydrateFilesFromUrls(storedRemoteFiles)
+    ? await rehydrateFilesFromUrls(
+        storedRemoteFiles,
+        guestSession ? { drawingId, guestSession } : undefined,
+      )
     : storedRemoteFiles;
   if (!isCurrent()) return null;
   const editor = refs.excalidrawAPI.current;

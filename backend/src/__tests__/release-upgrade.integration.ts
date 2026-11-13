@@ -58,9 +58,9 @@ describe("SQLite release upgrade", () => {
           recursive: true,
         });
       }
-      deploy();
-
       db = new Database(path.join(directory, "upgrade.db"));
+      db.pragma("user_version = 0");
+      deploy();
       db.pragma("foreign_keys = ON");
       db.exec(`
         INSERT INTO User (id, email, passwordHash, name, preferences, createdAt, updatedAt)
@@ -74,6 +74,8 @@ describe("SQLite release upgrade", () => {
           VALUES ('snapshot', 'drawing', 6, '[{"id":"earlier"}]', '{}', '{}');
         INSERT INTO DrawingPermission (id, drawingId, granteeUserId, permission, createdByUserId, createdAt, updatedAt)
           VALUES ('permission', 'drawing', 'viewer', 'view', 'owner', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+        INSERT INTO DrawingLinkShare (id, drawingId, permission, tokenHash, createdByUserId, updatedAt)
+          VALUES ('legacy-guest-link', 'drawing', 'edit', 'legacy-guest-hash', 'owner', CURRENT_TIMESTAMP);
         INSERT INTO CollectionShare (id, collectionId, granteeUserId, role, createdByUserId, createdAt, updatedAt)
           VALUES ('share', 'collection', 'viewer', 'view', 'owner', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
         INSERT INTO Library (id, items, createdAt, updatedAt)
@@ -132,6 +134,11 @@ describe("SQLite release upgrade", () => {
         where: { id: "drawing" },
         include: { snapshots: true, permissions: true },
       });
+      const legacyLink = await prisma.drawingLinkShare.findUniqueOrThrow({
+        where: { id: "legacy-guest-link" },
+      });
+      expect(legacyLink.revokedAt).toBeInstanceOf(Date);
+      expect(legacyLink.encryptedToken).toBeNull();
       expect(drawing?.version).toBe(7);
       expect(drawing?.snapshots[0].version).toBe(6);
       expect(drawing?.permissions[0].granteeUserId).toBe("viewer");

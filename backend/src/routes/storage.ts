@@ -41,6 +41,7 @@ export type StorageRouteDeps = {
   parseJsonField: <T>(rawValue: string | null | undefined, fallback: T) => T;
   invalidateDrawingsCache: () => void;
   io: SocketIoServer;
+  emitDrawingServerUpdate?: (drawingId: string) => Promise<void>;
 };
 
 export const registerStorageRoutes = (
@@ -54,6 +55,7 @@ export const registerStorageRoutes = (
     parseJsonField,
     invalidateDrawingsCache,
     io,
+    emitDrawingServerUpdate,
   } = deps;
 
   /**
@@ -62,8 +64,12 @@ export const registerStorageRoutes = (
    * by reloading the drawing — otherwise a collaborator's next save
    * would re-introduce the trimmed-away elements.
    */
-  const notifyServerStateChange = (drawingId: string) => {
-    io.to(`drawing_${drawingId}`).emit("drawing-server-update", { drawingId });
+  const notifyServerStateChange = async (drawingId: string) => {
+    if (emitDrawingServerUpdate) await emitDrawingServerUpdate(drawingId);
+    else
+      io.to(`drawing_${drawingId}`).emit("drawing-server-update", {
+        drawingId,
+      });
   };
 
   // ------------------------------------------------------------------
@@ -172,7 +178,7 @@ export const registerStorageRoutes = (
       }
 
       invalidateDrawingsCache();
-      notifyServerStateChange(id);
+      await notifyServerStateChange(id);
 
       return res.json({
         trimmed: {
@@ -348,7 +354,7 @@ export const registerStorageRoutes = (
       const errorCount = s3DeleteErrors;
 
       invalidateDrawingsCache();
-      notifyServerStateChange(id);
+      await notifyServerStateChange(id);
 
       return res.json({ deleted: deletePlan.deletedCount, errors: errorCount });
     }),

@@ -364,6 +364,10 @@ test.describe("Drawing Deletion", () => {
     );
     await selectToggle.click();
 
+    page.once("dialog", async (dialog) => {
+      expect(dialog.message()).toContain("guest links");
+      await dialog.accept();
+    });
     await page.getByTitle("Move to Trash").click();
 
     await expect(card).not.toBeVisible();

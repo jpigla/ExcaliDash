@@ -312,7 +312,8 @@ test("opening an image through a view-only link never attempts to save or upload
       if (r.method() === "PUT" && r.url().includes(`/drawings/${drawing.id}`))
         writes.push(r.url());
     });
-    await page.goto(`/shared/${drawing.id}`);
+    const { share } = await shared.json();
+    await page.goto(`/shared/${drawing.id}/${share.id}#${share.token}`);
     await expect(
       page.locator("canvas.excalidraw__canvas.interactive"),
     ).toBeVisible();
@@ -329,5 +330,127 @@ test("opening an image through a view-only link never attempts to save or upload
     ).toHaveCount(0);
   } finally {
     await deleteDrawing(request, drawing.id);
+  }
+});
+
+test("protected guest links retain separate access across tabs and reload", async ({
+  browser,
+  request,
+}) => {
+  await apiSignIn(request);
+  const drawing = await createDrawing(request, {
+    name: "Guest link separation",
+  });
+  const guestContext = await browser.newContext();
+  const editor = await guestContext.newPage();
+  const viewer = await guestContext.newPage();
+  const path = `${API_URL}/drawings/${drawing.id}/link-shares`;
+
+  const createLink = async (
+    permission: "view" | "edit",
+    passphrase?: string,
+  ) => {
+    const response = await request.post(path, {
+      headers: await getCsrfHeaders(request),
+      data: { permission, expiresAt: null, passphrase },
+    });
+    expect(response.ok()).toBe(true);
+    return (await response.json()).share as { id: string; token: string };
+  };
+
+  const open = async (page: Page, share: { id: string; token: string }) => {
+    await page.goto(`/shared/${drawing.id}/${share.id}#${share.token}`);
+  };
+  const canvas = (page: Page) =>
+    page.locator("canvas.excalidraw__canvas.interactive");
+
+  try {
+    const protectedEdit = await createLink("edit", "Workshop-password");
+    const publicView = await createLink("view");
+    await open(editor, protectedEdit);
+    await expect(
+      editor.getByRole("heading", { name: "Password required" }),
+    ).toBeVisible();
+    await editor.getByLabel("Guest link password").fill("Wrong-password");
+    await editor.getByRole("button", { name: "Open drawing" }).click();
+    await expect(editor.getByText("Incorrect password.")).toBeVisible();
+    await editor.getByLabel("Guest link password").fill("Workshop-password");
+    await editor.getByRole("button", { name: "Open drawing" }).click();
+    await expect(canvas(editor)).toBeVisible();
+
+    const viewerRead = viewer.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        response.url().endsWith(`/drawings/${drawing.id}`),
+    );
+    await open(viewer, publicView);
+    expect((await (await viewerRead).json()).accessLevel).toBe("view");
+    await expect(canvas(viewer)).toBeVisible();
+    await editor.reload();
+    await expect(canvas(editor)).toBeVisible();
+
+    const revoked = await request.delete(`${path}/${protectedEdit.id}`, {
+      headers: await getCsrfHeaders(request),
+    });
+    expect(revoked.ok()).toBe(true);
+    await expect(canvas(editor)).toHaveCount(0);
+    await expect(canvas(viewer)).toBeVisible();
+  } finally {
+    await guestContext.close();
+    await deleteDrawing(request, drawing.id);
+  }
+});
+
+test("the share dialog creates and lists independent guest links", async ({
+  page,
+}) => {
+  await signIn(page);
+  const drawing = await createDrawing(page.request, {
+    name: "Guest link settings",
+  });
+  try {
+    await page.goto(`/editor/${drawing.id}`);
+    await page.getByTitle("Share", { exact: true }).click();
+    const create = async (
+      permission: string,
+      expiry: string,
+      passphrase?: string,
+    ) => {
+      await page.getByRole("button", { name: "New guest link" }).click();
+      await page
+        .getByRole("combobox", { name: "Permission", exact: true })
+        .selectOption(permission);
+      await page
+        .getByRole("combobox", { name: "Expiration", exact: true })
+        .selectOption(expiry);
+      if (passphrase) {
+        await page.getByLabel("Require a password").check();
+        await page.getByLabel("Password", { exact: true }).fill(passphrase);
+      }
+      const created = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          response.url().endsWith("/link-shares"),
+      );
+      await page
+        .getByRole("button", { name: "Create link", exact: true })
+        .click();
+      const response = await created;
+      expect(response.ok()).toBe(true);
+      return (await response.json()).share;
+    };
+
+    const open = await create("view", "never");
+    const protectedLink = await create("edit", "1h", "Workshop-password");
+    expect(open.expiresAt).toBeNull();
+    expect(open.passwordProtected).toBe(false);
+    expect(protectedLink.expiresAt).not.toBeNull();
+    expect(protectedLink.passwordProtected).toBe(true);
+    expect(open.id).not.toBe(protectedLink.id);
+    await expect(
+      page.getByRole("button", { name: "Copy link", exact: true }),
+    ).toHaveCount(2);
+  } finally {
+    await deleteDrawing(page.request, drawing.id);
   }
 });

@@ -11,6 +11,10 @@ import {
   listS3Objects,
 } from "../../s3";
 import { type DrawingPrincipal } from "../../authz/sharing";
+import {
+  hasGuestAuthorization,
+  readGuestAuthorization,
+} from "../../authz/guestLinkSecurity";
 import { config } from "../../config";
 
 export type DrawingRouteContext = DashboardRouteDeps & {
@@ -18,7 +22,6 @@ export type DrawingRouteContext = DashboardRouteDeps & {
     req: express.Request,
   ) => Promise<DrawingPrincipal | null>;
   resolveDefaultTtlMs: (permission: "view" | "edit") => number;
-  resolveMaxTtlMs: () => number;
   respondWithAuthErrorIfPresent: (
     req: express.Request,
     res: express.Response,
@@ -43,6 +46,10 @@ export const createDrawingRouteContext = (
   const getRequestPrincipal = async (
     req: express.Request,
   ): Promise<DrawingPrincipal | null> => {
+    const authorization = req.headers.authorization;
+    if (hasGuestAuthorization(authorization)) {
+      return readGuestAuthorization(authorization, config.jwtSecret);
+    }
     if (req.user?.id) return { kind: "user", userId: req.user.id };
     return null;
   };
@@ -51,8 +58,6 @@ export const createDrawingRouteContext = (
     permission === "edit"
       ? config.linkShare.editDefaultTtlMs
       : config.linkShare.viewDefaultTtlMs;
-
-  const resolveMaxTtlMs = (): number => config.linkShare.maxTtlMs;
 
   const respondWithAuthErrorIfPresent = (
     req: express.Request,
@@ -194,7 +199,6 @@ export const createDrawingRouteContext = (
     ...deps,
     getRequestPrincipal,
     resolveDefaultTtlMs,
-    resolveMaxTtlMs,
     respondWithAuthErrorIfPresent,
     cleanupS3FilesForDrawing,
     cloneS3FileReferences,

@@ -588,9 +588,10 @@ registerDashboardRoutes(app, {
   MAX_PAGE_SIZE,
   config,
   logAuditEvent,
-  internDrawingFiles: (files, userId, drawingId) =>
-    internDrawingFilesWithPrisma(files, userId, drawingId, prisma),
+  internDrawingFiles: (files, userId, drawingId, persist) =>
+    internDrawingFilesWithPrisma(files, userId, drawingId, prisma, persist),
   revalidateDrawingAccess: socketHandlers.revalidateDrawingAccess,
+  emitDrawingScene: socketHandlers.emitDrawingScene,
   io,
 });
 registerFileRoutes(app, { prisma, requireAuth, optionalAuth, asyncHandler });
@@ -601,6 +602,7 @@ registerStorageRoutes(app, {
   parseJsonField,
   invalidateDrawingsCache,
   io,
+  emitDrawingServerUpdate: socketHandlers.emitDrawingServerUpdate,
 });
 registerImportExportRoutes({
   app,

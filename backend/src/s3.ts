@@ -12,6 +12,7 @@ import {
   HeadBucketCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { Readable } from "node:stream";
 import { config } from "./config";
 
 export interface S3Config {
@@ -203,6 +204,25 @@ export const uploadBuffer = async (
   });
 
   await s3Client.send(command);
+};
+
+/** Read a private drawing object without creating a client-visible S3 grant. */
+export const downloadDrawingFileStream = async (
+  key: string,
+): Promise<Readable> => {
+  if (!s3Client || !s3Config) {
+    throw new Error("S3 is not configured");
+  }
+  const response = await s3Client.send(
+    new GetObjectCommand({
+      Bucket: s3Config.bucket,
+      Key: key,
+    }),
+  );
+  if (!(response.Body instanceof Readable)) {
+    throw new Error("S3 object has no readable body");
+  }
+  return response.Body;
 };
 
 /** Download an object as raw bytes for server-side backup/export work. */

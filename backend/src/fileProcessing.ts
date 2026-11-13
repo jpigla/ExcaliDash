@@ -15,6 +15,7 @@
  */
 import type { PrismaClient } from "./generated/client";
 import { randomUUID } from "node:crypto";
+import { guestAccessEnded } from "./routes/dashboard/drawingGuestLock";
 import {
   hasDrawingFileContent,
   storeDrawingFileOnce,
@@ -42,6 +43,15 @@ export const MIME_TO_EXT: Record<string, string> = {
   "image/avif": "avif",
   "image/bmp": "bmp",
   "image/svg+xml": "svg",
+};
+
+export const isGuestImageType = (mimeType: string): boolean =>
+  Object.hasOwn(MIME_TO_EXT, mimeType) && mimeType !== "image/svg+xml";
+
+export const isInlineGuestImage = (dataURL: unknown): boolean => {
+  if (typeof dataURL !== "string") return false;
+  const mimeType = /^data:([^;,]+);base64,/i.exec(dataURL)?.[1];
+  return mimeType !== undefined && isGuestImageType(mimeType.toLowerCase());
 };
 
 /**
@@ -90,11 +100,17 @@ export const cleanupUnusedS3Upload = async (
  * Entries whose dataURL is already a ref (https://, /api/files/, ...) are
  * left untouched, so this is safe to run on every scene save.
  */
+export type DrawingFilePersist = (
+  content: Parameters<typeof storeDrawingFileOnce>[1],
+) => ReturnType<typeof storeDrawingFileOnce>;
+
 export const internDrawingFiles = async (
   files: Record<string, any>,
   userId: string,
   drawingId: string,
   prisma: Pick<PrismaClient, "drawingFile">,
+  persist: DrawingFilePersist = (content) =>
+    storeDrawingFileOnce(prisma, content),
 ): Promise<Record<string, any>> => {
   const s3Enabled = isS3Enabled();
   const cfg = s3Enabled ? getS3Config() : null;
@@ -155,7 +171,7 @@ export const internDrawingFiles = async (
 
       // Drawing-scoped access URL: a file id alone would be ambiguous
       // because the same content hash legitimately repeats across drawings.
-      const stored = await storeDrawingFileOnce(prisma, {
+      const stored = await persist({
         drawingId,
         fileId,
         mimeType: decoded.mimeType,
@@ -163,6 +179,13 @@ export const internDrawingFiles = async (
         storage: "s3",
         s3Key,
         data: null,
+      }).catch(async (error) => {
+        // The object was written before the guarded database mutation.
+        // Reclaim this unpublished generation when access is revoked.
+        if (error === guestAccessEnded) {
+          await cleanupUnusedS3Upload(s3Key, { storage: "db", s3Key: null });
+        }
+        throw error;
       });
       await cleanupUnusedS3Upload(s3Key, stored);
       result[fileId] = {
@@ -177,7 +200,7 @@ export const internDrawingFiles = async (
     }
 
     // Database-bytes mode: store the raw bytes inline in DrawingFile.data.
-    const stored = await storeDrawingFileOnce(prisma, {
+    const stored = await persist({
       drawingId,
       fileId,
       mimeType: decoded.mimeType,

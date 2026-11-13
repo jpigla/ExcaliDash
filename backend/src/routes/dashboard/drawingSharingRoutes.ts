@@ -1,10 +1,92 @@
 import express from "express";
+import { z } from "zod";
+import {
+  decryptGuestLinkToken,
+  encryptGuestLinkToken,
+  hashGuestPassphrase,
+  isValidGuestPassphrase,
+} from "../../authz/guestLinkSecurity";
+import { config as appConfig } from "../../config";
+import type { Prisma } from "../../generated/client";
+import { lockDrawingForGuestAccess } from "./drawingGuestLock";
+import { isTrashCollectionId } from "./trash";
 import {
   buildShareLinkToken,
   hashShareLinkToken,
   normalizeDrawingPermission,
 } from "../../authz/sharing";
 import type { DrawingRouteContext } from "./drawingRouteContext";
+
+const guestLinkFields = {
+  id: true,
+  permission: true,
+  expiresAt: true,
+  revokedAt: true,
+  createdAt: true,
+  encryptedToken: true,
+  passphraseHash: true,
+} satisfies Prisma.DrawingLinkShareSelect;
+
+type GuestLinkRow = Prisma.DrawingLinkShareGetPayload<{
+  select: typeof guestLinkFields;
+}>;
+
+const recoverLinkToken = (encrypted: string): string | null => {
+  try {
+    return decryptGuestLinkToken(encrypted, appConfig.jwtSecret);
+  } catch {
+    // Changing JWT_SECRET invalidates existing browser sessions and prevents
+    // copying old links. Owners can still list and revoke those links.
+    return null;
+  }
+};
+
+const serializeGuestLink = ({
+  encryptedToken,
+  passphraseHash,
+  ...share
+}: GuestLinkRow) => ({
+  ...share,
+  passwordProtected: passphraseHash !== null,
+  token:
+    encryptedToken &&
+    !share.revokedAt &&
+    (!share.expiresAt || share.expiresAt.getTime() > Date.now())
+      ? recoverLinkToken(encryptedToken)
+      : null,
+});
+
+const linkChanges = z.strictObject({
+  permission: z
+    .enum(["view", "edit"], { error: "Invalid permission" })
+    .optional(),
+  expiresAt: z.iso
+    .datetime({ offset: true, error: "Invalid expiry" })
+    .refine((value) => Date.parse(value) - Date.now() >= 60_000, {
+      message: "Expiry must be at least 1 minute in the future",
+    })
+    .nullable()
+    .optional(),
+  passphrase: z
+    .string({ error: "Invalid passphrase" })
+    .refine(isValidGuestPassphrase, {
+      message: "Use at least 8 characters and at most 72 UTF-8 bytes",
+    })
+    .nullable()
+    .optional(),
+});
+
+const createLink = linkChanges.required({ permission: true });
+const updateLink = linkChanges.refine(
+  (payload) => Object.keys(payload).length > 0,
+  { message: "At least one link setting is required" },
+);
+
+const sendLinkValidationError = (res: express.Response, error: z.ZodError) =>
+  res.status(400).json({
+    error: "Validation error",
+    message: error.issues[0]?.message ?? "Invalid link settings",
+  });
 
 export const registerDrawingSharingRoutes = (
   app: express.Express,
@@ -18,7 +100,6 @@ export const registerDrawingSharingRoutes = (
     config,
     logAuditEvent,
     resolveDefaultTtlMs,
-    resolveMaxTtlMs,
     revalidateDrawingAccess,
   } = context;
 
@@ -232,128 +313,193 @@ export const registerDrawingSharingRoutes = (
     }),
   );
 
+  const findOwnedDrawing = (
+    db: Prisma.TransactionClient,
+    drawingId: string,
+    userId: string,
+  ) =>
+    db.drawing.findFirst({
+      where: { id: drawingId, userId },
+      select: { collectionId: true },
+    });
+
+  const recordLinkEvent = async (
+    req: express.Request,
+    drawingId: string,
+    userId: string,
+    action: string,
+    shareId: string,
+  ): Promise<void> => {
+    if (!config.enableAuditLogging) return;
+    await logAuditEvent({
+      userId,
+      action,
+      resource: `drawing:${drawingId}`,
+      ipAddress: req.ip || req.connection.remoteAddress || undefined,
+      userAgent: req.headers["user-agent"] || undefined,
+      details: { drawingId, shareId },
+    });
+  };
+
+  app.get(
+    "/drawings/:id/link-shares",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const { id } = req.params;
+
+      if (!(await findOwnedDrawing(prisma, id, userId))) {
+        return res.status(404).json({ error: "Drawing not found" });
+      }
+
+      const shares = await prisma.drawingLinkShare.findMany({
+        where: { drawingId: id },
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+        select: guestLinkFields,
+      });
+      return res.set("Cache-Control", "no-store").json({
+        shares: shares.map(serializeGuestLink),
+      });
+    }),
+  );
+
   app.post(
     "/drawings/:id/link-shares",
     requireAuth,
     asyncHandler(async (req, res) => {
-      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
       const { id } = req.params;
-
-      const drawing = await prisma.drawing.findUnique({
-        where: { id },
-        select: { userId: true },
-      });
-      if (!drawing || drawing.userId !== req.user.id) {
+      const input = createLink.safeParse(req.body);
+      if (!input.success) {
+        return sendLinkValidationError(res, input.error);
+      }
+      if (!(await findOwnedDrawing(prisma, id, userId))) {
         return res.status(404).json({ error: "Drawing not found" });
       }
 
-      const permission = normalizeDrawingPermission(req.body?.permission);
-      if (!permission) {
-        return res
-          .status(400)
-          .json({ error: "Validation error", message: "Invalid permission" });
-      }
-
-      const now = Date.now();
-      const maxTtlMs = resolveMaxTtlMs();
-      const defaultTtlMs = resolveDefaultTtlMs(permission);
-      const effectiveDefaultTtlMs =
-        permission === "edit" ? Math.min(defaultTtlMs, maxTtlMs) : defaultTtlMs;
-      const hasExpiresAtKey = Object.prototype.hasOwnProperty.call(
-        req.body ?? {},
-        "expiresAt",
-      );
-      const rawExpiresAt = req.body?.expiresAt;
-
-      let expiresAt: Date | null;
-      if (hasExpiresAtKey && rawExpiresAt === null) {
-        // Explicit null expiry means "never auto-disable" for both view and edit
-        // links. Only non-null values are subject to the max-TTL cap below.
-        expiresAt = null;
-      } else {
-        const requestedExpiresAt =
-          typeof rawExpiresAt === "string" && rawExpiresAt.trim().length > 0
-            ? new Date(rawExpiresAt.trim())
-            : null;
-        const hasValidRequestedExpiry = Boolean(
-          requestedExpiresAt && Number.isFinite(requestedExpiresAt.getTime()),
-        );
-
-        if (hasValidRequestedExpiry && requestedExpiresAt) {
-          const candidateTtlMs = requestedExpiresAt.getTime() - now;
-          if (candidateTtlMs < 60_000) {
-            return res.status(400).json({
-              error: "Validation error",
-              message: "Expiry must be at least 1 minute in the future",
-            });
-          }
-          const ttlMs =
-            permission === "edit"
-              ? Math.min(candidateTtlMs, maxTtlMs)
-              : candidateTtlMs;
-          expiresAt = new Date(now + ttlMs);
-        } else if (
-          hasExpiresAtKey &&
-          rawExpiresAt !== undefined &&
-          rawExpiresAt !== null
-        ) {
-          return res.status(400).json({
-            error: "Validation error",
-            message: "Invalid expiry",
-          });
-        } else {
-          expiresAt = new Date(now + effectiveDefaultTtlMs);
+      const { permission, expiresAt, passphrase } = input.data;
+      const token = buildShareLinkToken();
+      const passphraseHash = passphrase
+        ? await hashGuestPassphrase(passphrase)
+        : null;
+      const share = await prisma.$transaction(async (tx) => {
+        await lockDrawingForGuestAccess(tx, id);
+        const drawing = await findOwnedDrawing(tx, id, userId);
+        if (!drawing || isTrashCollectionId(drawing.collectionId, userId)) {
+          return null;
         }
-      }
-
-      // Passphrase support is currently disabled. We keep passphraseHash nullable for backwards compatibility.
-      const passphraseHashValue: string | null = null;
-
-      // Enforce a single active "anyone with the link" policy per drawing. The public link is the drawing id,
-      // so multiple active link-share rows would be confusing and could unintentionally widen access.
-      await prisma.drawingLinkShare.updateMany({
-        where: { drawingId: id, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
-
-      // Token is generated only to satisfy the current schema's tokenHash requirement.
-      // Link access is based on drawing id + active policy (no secret token in the URL).
-      const tokenHash = hashShareLinkToken(buildShareLinkToken());
-
-      const created = await prisma.drawingLinkShare.create({
-        data: {
-          drawingId: id,
-          permission,
-          tokenHash,
-          passphraseHash: passphraseHashValue,
-          expiresAt,
-          createdByUserId: req.user.id,
-        },
-        select: {
-          id: true,
-          permission: true,
-          expiresAt: true,
-          revokedAt: true,
-          createdAt: true,
-        },
-      });
-
-      if (config.enableAuditLogging) {
-        await logAuditEvent({
-          userId: req.user.id,
-          action: "drawing_link_share_created",
-          resource: `drawing:${id}`,
-          ipAddress: req.ip || req.connection.remoteAddress || undefined,
-          userAgent: req.headers["user-agent"] || undefined,
-          details: {
+        return tx.drawingLinkShare.create({
+          data: {
             drawingId: id,
             permission,
-            expiresAt: expiresAt ? expiresAt.toISOString() : null,
+            tokenHash: hashShareLinkToken(token),
+            encryptedToken: encryptGuestLinkToken(token, appConfig.jwtSecret),
+            passphraseHash,
+            expiresAt:
+              expiresAt === undefined
+                ? new Date(Date.now() + resolveDefaultTtlMs(permission))
+                : expiresAt === null
+                  ? null
+                  : new Date(expiresAt),
+            createdByUserId: userId,
           },
+          select: guestLinkFields,
         });
+      });
+      if (!share) {
+        return res.status(404).json({ error: "Drawing not found or in trash" });
       }
 
-      return res.json({ share: created });
+      await recordLinkEvent(
+        req,
+        id,
+        userId,
+        "drawing_link_share_created",
+        share.id,
+      );
+      return res
+        .set("Cache-Control", "no-store")
+        .json({ share: serializeGuestLink(share) });
+    }),
+  );
+
+  app.patch(
+    "/drawings/:id/link-shares/:shareId",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const { id, shareId } = req.params;
+      const input = updateLink.safeParse(req.body);
+      if (!input.success) {
+        return sendLinkValidationError(res, input.error);
+      }
+      if (!(await findOwnedDrawing(prisma, id, userId))) {
+        return res.status(404).json({ error: "Drawing not found" });
+      }
+
+      const { permission, expiresAt, passphrase } = input.data;
+      const passphraseHash =
+        typeof passphrase === "string"
+          ? await hashGuestPassphrase(passphrase)
+          : passphrase;
+      const share = await prisma.$transaction(async (tx) => {
+        await lockDrawingForGuestAccess(tx, id);
+        const drawing = await findOwnedDrawing(tx, id, userId);
+        if (!drawing || isTrashCollectionId(drawing.collectionId, userId)) {
+          return null;
+        }
+        const current = await tx.drawingLinkShare.findFirst({
+          where: {
+            id: shareId,
+            drawingId: id,
+            revokedAt: null,
+            encryptedToken: { not: null },
+          },
+          select: { permission: true, expiresAt: true, passphraseHash: true },
+        });
+        if (!current) return null;
+
+        const accessChanged =
+          (permission !== undefined && permission !== current.permission) ||
+          (passphraseHash !== undefined &&
+            passphraseHash !== current.passphraseHash) ||
+          (expiresAt !== undefined &&
+            (expiresAt === null ? null : Date.parse(expiresAt)) !==
+              (current.expiresAt?.getTime() ?? null));
+        return tx.drawingLinkShare.update({
+          where: { id: shareId },
+          data: {
+            permission,
+            expiresAt:
+              typeof expiresAt === "string" ? new Date(expiresAt) : expiresAt,
+            passphraseHash,
+            ...(accessChanged
+              ? {
+                  revision: { increment: 1 },
+                  failedAttempts: 0,
+                  lockedUntil: null,
+                }
+              : {}),
+          },
+          select: guestLinkFields,
+        });
+      });
+      if (!share) return res.status(404).json({ error: "Link not found" });
+
+      await revokeLiveAccess(id);
+      await recordLinkEvent(
+        req,
+        id,
+        userId,
+        "drawing_link_share_updated",
+        shareId,
+      );
+      return res
+        .set("Cache-Control", "no-store")
+        .json({ share: serializeGuestLink(share) });
     }),
   );
 
@@ -361,37 +507,38 @@ export const registerDrawingSharingRoutes = (
     "/drawings/:id/link-shares/:shareId",
     requireAuth,
     asyncHandler(async (req, res) => {
-      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
       const { id, shareId } = req.params;
 
-      const drawing = await prisma.drawing.findUnique({
-        where: { id },
-        select: { userId: true },
-      });
-      if (!drawing || drawing.userId !== req.user.id) {
+      if (!(await findOwnedDrawing(prisma, id, userId))) {
         return res.status(404).json({ error: "Drawing not found" });
       }
-
-      await prisma.drawingLinkShare.updateMany({
-        where: { id: shareId, drawingId: id, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
-      await revokeLiveAccess(id);
-
-      if (config.enableAuditLogging) {
-        await logAuditEvent({
-          userId: req.user.id,
-          action: "drawing_link_share_revoked",
-          resource: `drawing:${id}`,
-          ipAddress: req.ip || req.connection.remoteAddress || undefined,
-          userAgent: req.headers["user-agent"] || undefined,
-          details: { drawingId: id, shareId },
+      const changed = await prisma.$transaction(async (tx) => {
+        await lockDrawingForGuestAccess(tx, id);
+        const revoked = await tx.drawingLinkShare.updateMany({
+          where: {
+            id: shareId,
+            drawingId: id,
+            revokedAt: null,
+            drawing: { userId },
+          },
+          data: { revokedAt: new Date(), revision: { increment: 1 } },
         });
+        return revoked.count > 0;
+      });
+      if (changed) {
+        await revokeLiveAccess(id);
+        await recordLinkEvent(
+          req,
+          id,
+          userId,
+          "drawing_link_share_revoked",
+          shareId,
+        );
       }
 
       return res.json({ success: true });
     }),
   );
-
-  // Legacy share-token exchange endpoint removed: link access is based on drawing id + active policy.
 };

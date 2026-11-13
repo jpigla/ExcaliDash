@@ -1,5 +1,9 @@
 import { Prisma, PrismaClient } from "../../generated/client";
 import { encodeSnapshotField } from "../../snapshots/snapshotCodec";
+import {
+  lockDrawingForGuestAccess,
+  revokeAllDrawingGuestLinks,
+} from "./drawingGuestLock";
 
 // A file entry is "blank" when it exists but carries no content (empty
 // dataURL). Sanitizer tombstones and transient client state can produce
@@ -65,6 +69,8 @@ type ApplySceneUpdateArgs = {
   versionGuard: number | "optimistic";
   snapshotCompressionEnabled?: boolean;
   maxRetries?: number;
+  authorizeWrite?: (tx: Prisma.TransactionClient) => Promise<void>;
+  revokeGuestLinks?: boolean;
   mutate: (current: DrawingRow) => SceneMutation | Promise<SceneMutation>;
 };
 
@@ -84,6 +90,8 @@ export const applySceneUpdateTx = async (
     snapshotCompressionEnabled = true,
     mutate,
     maxRetries = 0,
+    authorizeWrite,
+    revokeGuestLinks,
   } = args;
 
   const attempts = versionGuard === "optimistic" ? maxRetries + 1 : 1;
@@ -92,6 +100,8 @@ export const applySceneUpdateTx = async (
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       return await prisma.$transaction(async (tx) => {
+        if (revokeGuestLinks) await lockDrawingForGuestAccess(tx, drawingId);
+        await authorizeWrite?.(tx);
         const current = await tx.drawing.findUnique({
           where: { id: drawingId },
         });
@@ -166,6 +176,10 @@ export const applySceneUpdateTx = async (
         });
         if (updateResult.count === 0) {
           throw versionConflictError;
+        }
+
+        if (revokeGuestLinks) {
+          await revokeAllDrawingGuestLinks(tx, drawingId);
         }
 
         const updated = await tx.drawing.findFirst({

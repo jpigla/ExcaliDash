@@ -33,11 +33,4 @@ export const linkSharingEnv: readonly EnvVarSpec[] = [
     default: "2592000000",
     doc: "Default lifetime (ms) of view share links (30 days).",
   },
-  {
-    name: "LINK_SHARE_MAX_TTL_MS",
-    group: "Link sharing",
-    kind: "number",
-    default: "7776000000",
-    doc: "Maximum allowed lifetime (ms) for any share link (90 days).",
-  },
 ];

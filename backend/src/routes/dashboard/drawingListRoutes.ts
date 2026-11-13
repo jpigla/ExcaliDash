@@ -245,6 +245,10 @@ export const registerDrawingListRoutes = (
         });
       }
 
+      if (principal?.kind === "guest") {
+        return res.status(404).json({ error: "Drawing not found" });
+      }
+
       const drawing = await prisma.drawing.findUnique({
         where: { id },
         select: { preview: true, updatedAt: true },

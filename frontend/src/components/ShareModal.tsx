@@ -1,21 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import clsx from "clsx";
-import {
-  Link as LinkIcon,
-  AlertTriangle,
-  Check,
-  RefreshCw,
-} from "lucide-react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 import * as api from "../api";
 import { useAuth } from "../context/AuthContext";
 import { GeneralAccessSection } from "./share-modal/GeneralAccessSection";
 import { SharePeopleSection } from "./share-modal/SharePeopleSection";
-import {
-  calculateExpiresAt,
-  DEFAULT_EDIT_EXPIRY_OPTION,
-  toDatetimeLocalFromIso,
-} from "./share-modal/shareUtils";
 
 type Props = {
   anchorRef: React.RefObject<HTMLElement>;
@@ -61,46 +50,15 @@ export const ShareModal: React.FC<Props> = ({
   const [userQuery, setUserQuery] = useState("");
   const [userResults, setUserResults] = useState<api.ShareResolvedUser[]>([]);
   const [userPermission, setUserPermission] = useState<"view" | "edit">("view");
-  const [linkPermission, setLinkPermission] = useState<"view" | "edit">("view");
-  const [expiryOption, setExpiryOption] = useState("1h");
-  const [customExpiry, setCustomExpiry] = useState("");
-  const [isCopied, setIsCopied] = useState(false);
-
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
-  const shareableEditorUrl = `${origin}/shared/${drawingId}`;
-
-  const activeLink = useMemo(() => {
-    const now = Date.now();
-    return (
-      (sharing?.linkShares || []).find((s) => {
-        if (s.revokedAt) return false;
-        if (!s.expiresAt) return true;
-        const ts = Date.parse(String(s.expiresAt));
-        if (!Number.isFinite(ts)) return false;
-        return ts > now;
-      }) || null
-    );
-  }, [sharing]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    if (!activeLink) return;
-    setLinkPermission(activeLink.permission);
-    if (activeLink.expiresAt) {
-      setExpiryOption("custom");
-      setCustomExpiry(toDatetimeLocalFromIso(activeLink.expiresAt));
-    } else {
-      setExpiryOption("never");
-      setCustomExpiry("");
-    }
-  }, [activeLink, isOpen]);
-
   const refresh = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const data = await api.getDrawingSharing(drawingId);
-      setSharing(data);
+      const [data, linkShares] = await Promise.all([
+        api.getDrawingSharing(drawingId),
+        api.listLinkShares(drawingId),
+      ]);
+      setSharing({ permissions: data.permissions, linkShares });
     } catch (err: unknown) {
       let message = "Failed to load sharing settings";
       if (api.isAxiosError(err)) {
@@ -121,10 +79,6 @@ export const ShareModal: React.FC<Props> = ({
     setUserQuery("");
     setUserResults([]);
     setUserPermission("view");
-    setLinkPermission("view");
-    setExpiryOption("1h");
-    setCustomExpiry("");
-    setIsCopied(false);
     void refresh();
   }, [isOpen, refresh]);
 
@@ -153,29 +107,6 @@ export const ShareModal: React.FC<Props> = ({
       window.clearTimeout(t);
     };
   }, [currentUserId, drawingId, isOpen, userQuery]);
-
-  const handleCopy = async (text: string) => {
-    if (!text) return;
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        const textarea = document.createElement("textarea");
-        textarea.value = text;
-        textarea.setAttribute("readonly", "true");
-        textarea.style.position = "fixed";
-        textarea.style.left = "-9999px";
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        document.body.removeChild(textarea);
-      }
-      setIsCopied(true);
-      setTimeout(() => setIsCopied(false), 2000);
-    } catch {
-      // Clipboard access can be denied by the browser; sharing still works via visible link text.
-    }
-  };
 
   const handleAddUser = async (uId: string) => {
     setIsLoading(true);
@@ -243,57 +174,7 @@ export const ShareModal: React.FC<Props> = ({
     }
   };
 
-  const handleUpdateLink = async (
-    newPermission?: "view" | "edit",
-    newExpiry?: string | null,
-  ) => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const perm = newPermission ?? linkPermission;
-      setLinkPermission(perm);
-      let expiresAt =
-        newExpiry !== undefined
-          ? newExpiry
-          : calculateExpiresAt(expiryOption, customExpiry);
-      if (perm === "edit" && expiresAt === null) {
-        expiresAt = calculateExpiresAt(DEFAULT_EDIT_EXPIRY_OPTION);
-        setExpiryOption(DEFAULT_EDIT_EXPIRY_OPTION);
-      }
-      await api.createLinkShare(drawingId, { permission: perm, expiresAt });
-      await refresh();
-      void handleCopy(shareableEditorUrl);
-    } catch (err: unknown) {
-      let message = "Failed to update link";
-      if (api.isAxiosError(err)) {
-        const serverMessage =
-          typeof err.response?.data?.message === "string"
-            ? err.response.data.message
-            : null;
-        if (serverMessage) message = serverMessage;
-      }
-      setError(message);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleRevokeLink = async () => {
-    if (!activeLink) return;
-    setIsLoading(true);
-    setError(null);
-    try {
-      await api.revokeLinkShare(drawingId, activeLink.id);
-      await refresh();
-    } catch {
-      setError("Failed to revoke link");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   if (!isOpen) return null;
-  const currentLinkUrl = activeLink ? shareableEditorUrl : "";
 
   return createPortal(
     <>
@@ -333,36 +214,15 @@ export const ShareModal: React.FC<Props> = ({
           />
 
           <GeneralAccessSection
-            activeLink={activeLink}
-            linkPermission={linkPermission}
-            expiryOption={expiryOption}
-            customExpiry={customExpiry}
-            setLinkPermission={setLinkPermission}
-            setExpiryOption={setExpiryOption}
-            setCustomExpiry={setCustomExpiry}
-            handleUpdateLink={handleUpdateLink}
-            handleRevokeLink={handleRevokeLink}
+            drawingId={drawingId}
+            shares={sharing?.linkShares ?? []}
+            onSharesChange={(linkShares) =>
+              setSharing((current) =>
+                current ? { ...current, linkShares } : current,
+              )
+            }
+            disabled={isLoading || !sharing}
           />
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between border-t-2 border-slate-100 px-4 py-3 dark:border-neutral-800 bg-slate-50 dark:bg-neutral-900/50">
-          <button
-            onClick={() => handleCopy(currentLinkUrl)}
-            disabled={!activeLink}
-            className={clsx(
-              "w-full py-2.5",
-              isCopied ? "ui-button-success" : "ui-button-secondary",
-              !activeLink && "cursor-not-allowed opacity-40 shadow-none",
-            )}
-          >
-            {isCopied ? (
-              <Check size={14} strokeWidth={2.5} />
-            ) : (
-              <LinkIcon size={14} strokeWidth={2.5} />
-            )}
-            {isCopied ? "Copied Link!" : "Copy Link"}
-          </button>
         </div>
 
         {isLoading && (

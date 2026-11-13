@@ -7,6 +7,7 @@ import { registerDrawingCreateUpdateRoutes } from "./drawingCreateUpdateRoutes";
 import { registerDrawingDeleteDuplicateRoutes } from "./drawingDeleteDuplicateRoutes";
 import { registerDrawingSharingRoutes } from "./drawingSharingRoutes";
 import { registerDrawingSharedVisibilityRoutes } from "./drawingSharedVisibilityRoutes";
+import { registerDrawingGuestRoutes } from "./drawingGuestRoutes";
 import { registerDrawingHistoryRoutes } from "./drawingHistoryRoutes";
 
 export const registerDrawingRoutes = (
@@ -15,6 +16,7 @@ export const registerDrawingRoutes = (
 ) => {
   const context = createDrawingRouteContext(deps);
 
+  registerDrawingGuestRoutes(app, context);
   registerDrawingListRoutes(app, context);
   registerDrawingReadRoutes(app, context);
   registerDrawingCreateUpdateRoutes(app, context);

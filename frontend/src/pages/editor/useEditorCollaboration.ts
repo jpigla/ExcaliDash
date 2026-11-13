@@ -17,6 +17,7 @@ interface Peer extends UserIdentity {
 
 type UseEditorCollaborationInput = {
   drawingId?: string;
+  guestSession?: string;
   me: UserIdentity;
   isReady: boolean;
   excalidrawAPI: MutableRefObject<any>;
@@ -56,6 +57,7 @@ export const bindRoomJoin = (
 
 export const useEditorCollaboration = ({
   drawingId,
+  guestSession,
   me,
   isReady,
   excalidrawAPI,
@@ -99,6 +101,7 @@ export const useEditorCollaboration = ({
       path: "/socket.io",
       transports: ["websocket", "polling"],
       withCredentials: true,
+      ...(guestSession && { auth: { guestSession } }),
     });
     socketRef.current = socket;
     if (import.meta.env.DEV) {
@@ -161,12 +164,20 @@ export const useEditorCollaboration = ({
     socket.on("error", (payload: any) => {
       const message =
         typeof payload?.message === "string" ? payload.message : null;
+      if (guestSession && payload?.code === "GUEST_ACCESS_ENDED") {
+        onAccessDenied();
+        return;
+      }
       console.warn("[Editor] Socket error:", payload);
       if (message === "You do not have access to this drawing") {
         onAccessDenied();
         return;
       }
       if (message) toast.error(message);
+    });
+    socket.on("connect_error", (error) => {
+      if (guestSession && error.message === "GUEST_ACCESS_ENDED")
+        onAccessDenied();
     });
     socket.on("cursor-move", (data: any) => {
       cursorBuffer.current.set(data.userId, {
@@ -334,7 +345,10 @@ export const useEditorCollaboration = ({
         if (Object.keys(reusableFiles).length > 0) stage(reusableFiles);
       }
       if (filesNeedRehydration(incomingFiles)) {
-        void rehydrateFilesFromUrls(incomingFiles).then(stage);
+        void rehydrateFilesFromUrls(
+          incomingFiles,
+          ...(guestSession ? [{ drawingId, guestSession }] : []),
+        ).then(stage);
       } else {
         stage(incomingFiles);
       }
@@ -370,7 +384,10 @@ export const useEditorCollaboration = ({
       try {
         // Joining after the initial load closes its subscription gap; joining
         // after reconnect recovers edits missed while the socket was offline.
-        const remote = await api.getDrawing(drawingId);
+        const remote = await api.getDrawing(
+          drawingId,
+          ...(guestSession ? [guestSession] : []),
+        );
         if (cancelled || generation !== catchupGeneration) return;
         stageElements(remote.elements, true);
         // Socket packets received during the read already have newer file
@@ -447,6 +464,7 @@ export const useEditorCollaboration = ({
       document.removeEventListener("mouseleave", onMouseLeave);
       socket.off("presence-update");
       socket.off("error");
+      socket.off("connect_error");
       socket.off("cursor-move");
       socket.off("element-update");
       socket.off("drawing-server-update");
@@ -466,6 +484,7 @@ export const useEditorCollaboration = ({
     };
   }, [
     drawingId,
+    guestSession,
     me,
     isReady,
     excalidrawAPI,

@@ -10,6 +10,8 @@ type AccessLevel = "none" | "view" | "edit" | "owner";
 
 type SceneLoaderParams = {
   id: string | undefined;
+  guestSession?: string;
+  onGuestAccessEnded?: () => void;
   user: unknown;
   location: {
     pathname: string;
@@ -62,6 +64,8 @@ const buildEmptyScene = () => ({
 
 export const useEditorSceneLoader = ({
   id,
+  guestSession,
+  onGuestAccessEnded,
   user,
   location,
   navigate,
@@ -129,7 +133,7 @@ export const useEditorSceneLoader = ({
             })
           : Promise.resolve([]);
         const [data, libraryItems] = await Promise.all([
-          api.getDrawing(id),
+          api.getDrawing(id, ...(guestSession ? [guestSession] : [])),
           libraryItemsPromise,
         ]);
         if (cancelled) return;
@@ -139,7 +143,9 @@ export const useEditorSceneLoader = ({
             data.accessLevel === "edit" ||
             data.accessLevel === "owner"
             ? data.accessLevel
-            : "owner",
+            : guestSession
+              ? "none"
+              : "owner",
         );
         const rawElements = data.elements || [];
         // Paint first, stream images in. In S3 (or db-ref) mode the loaded
@@ -241,9 +247,22 @@ export const useEditorSceneLoader = ({
             }
           }
         };
-        void rehydrateFilesProgressive(files, handleFileReady, () => cancelled);
+        void rehydrateFilesProgressive(
+          files,
+          handleFileReady,
+          () => cancelled,
+          guestSession ? { drawingId: id, guestSession } : undefined,
+        );
       } catch (err) {
         if (cancelled) return;
+        if (
+          guestSession &&
+          api.isAxiosError(err) &&
+          [401, 403, 404].includes(err.response?.status ?? 0)
+        ) {
+          onGuestAccessEnded?.();
+          return;
+        }
         console.error("Failed to load drawing", err);
         let message = "Failed to load drawing";
         if (api.isAxiosError(err)) {
@@ -293,6 +312,8 @@ export const useEditorSceneLoader = ({
     };
   }, [
     id,
+    guestSession,
+    onGuestAccessEnded,
     location.hash,
     location.pathname,
     location.search,

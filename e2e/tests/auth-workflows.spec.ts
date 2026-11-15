@@ -77,6 +77,91 @@ test("login rejects a bad password, survives reload, and logout blocks private a
   }
 });
 
+for (const [role, identity] of [
+  ["admin", owner],
+  ["member", viewer],
+] as const) {
+  test(`a signed-in ${role} can upload, replace, and remove a profile picture`, async ({
+    page,
+  }) => {
+    await signIn(page, identity);
+    await page.goto("/profile");
+    const profileAvatar = page.getByRole("main").locator(".playful-avatar img");
+    const sidebarAvatar = page.locator("aside .playful-avatar img");
+
+    const choosePicture = async (
+      name: string,
+      mimeType: string,
+      buffer: Buffer,
+    ) => {
+      const [fileChooser] = await Promise.all([
+        page.waitForEvent("filechooser"),
+        page.getByRole("button", { name: /^(Upload|Change) picture$/ }).click(),
+      ]);
+      await fileChooser.setFiles({ name, mimeType, buffer });
+    };
+
+    const upload = async (color: string, format: "png" | "jpeg" | "webp") => {
+      const mimeType = `image/${format}`;
+      const dataUrl = await page.evaluate(
+        ({ fill, type }) => {
+          const canvas = document.createElement("canvas");
+          canvas.width = 48;
+          canvas.height = 32;
+          const context = canvas.getContext("2d")!;
+          context.fillStyle = fill;
+          context.fillRect(0, 0, 48, 32);
+          return canvas.toDataURL(type);
+        },
+        { fill: color, type: mimeType },
+      );
+      expect(dataUrl.startsWith(`data:${mimeType};base64,`)).toBe(true);
+      await choosePicture(
+        `avatar.${format}`,
+        mimeType,
+        Buffer.from(dataUrl.split(",")[1], "base64"),
+      );
+      await expect(page.getByText("Profile picture updated")).toBeVisible();
+      const src = await profileAvatar.getAttribute("src");
+      expect(src).toMatch(/\/auth\/profile\/avatar\/[a-f0-9-]{36}$/);
+      await expect(profileAvatar).toHaveJSProperty("naturalWidth", 128);
+      await expect(sidebarAvatar).toHaveAttribute("src", src!);
+      return src!;
+    };
+
+    try {
+      const largePngHeader = Buffer.from(
+        "89504e470d0a1a0a0000000d494844520000400000004000",
+        "hex",
+      );
+      await choosePicture("large.png", "image/png", largePngHeader);
+      await expect(page.getByRole("alert")).toContainText(
+        "up to 32 megapixels",
+      );
+      const first = await upload("#b45309", "png");
+      await page.reload();
+      await expect(profileAvatar).toHaveAttribute("src", first);
+      const replacement = await upload(
+        "#0369a1",
+        role === "admin" ? "jpeg" : "webp",
+      );
+      expect(replacement).not.toBe(first);
+
+      await page.getByRole("button", { name: "Remove picture" }).click();
+      await expect(page.getByText("Profile picture removed")).toBeVisible();
+      await page.reload();
+      await expect(
+        page.getByRole("button", { name: "Upload picture" }),
+      ).toBeVisible();
+      await expect(profileAvatar).toHaveCount(0);
+    } finally {
+      await page.request.delete(`${API_URL}/auth/profile/avatar`, {
+        headers: await getCsrfHeaders(page.request),
+      });
+    }
+  });
+}
+
 test("a viewer cannot discover private drawings, edit a view-only share, or retain revoked access", async ({
   page,
   request,

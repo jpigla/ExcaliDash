@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { isGuestImageType } from "../fileProcessing";
 import { sanitizeElementText, sanitizeUrl } from "../security";
+import { isSceneBounds } from "./sceneBounds";
 
 const id = z.string().min(1).max(200);
 const fileId = id
@@ -202,6 +203,13 @@ const cursor = z.object({
     .refine((value) => Object.keys(value).length <= 500)
     .optional(),
 });
+const visibleBounds = z.object({
+  drawingId: id,
+  bounds: z
+    .tuple([z.number(), z.number(), z.number(), z.number()])
+    .refine(isSceneBounds),
+  following: nullableId.optional(),
+});
 const activity = z.object({ drawingId: id, isActive: z.boolean() });
 
 const file = z.object({
@@ -245,6 +253,7 @@ const scene = z
 const schemas = {
   "join-room": join,
   "cursor-move": cursor,
+  "visible-bounds": visibleBounds,
   "user-activity": activity,
   "element-update": scene,
 };
@@ -277,12 +286,14 @@ const packetSize = (root: unknown, byteLimit: number): number | null => {
 const maxPacketBytes = {
   "join-room": 4096,
   "cursor-move": 16 * 1024,
+  "visible-bounds": 4096,
   "user-activity": 4096,
   "element-update": 768 * 1024,
 };
 const maxPackets = {
   "join-room": 4,
   "cursor-move": 32,
+  "visible-bounds": 16,
   "user-activity": 8,
   "element-update": 24,
 };

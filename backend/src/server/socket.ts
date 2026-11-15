@@ -1,4 +1,3 @@
-import jwt from "jsonwebtoken";
 import { Server } from "socket.io";
 import { getGuestPrincipalFromCookieHeader } from "../authz/guestLinkSecurity";
 import { scopeGuestScene } from "../routes/dashboard/drawingGuestResponse";
@@ -18,6 +17,8 @@ import {
   type PresenceUser,
   type SocketState,
 } from "./socketAccess";
+import { isSceneBounds } from "./sceneBounds";
+import { createSocketAuthResolver, revalidateSocketApiKey } from "./socketAuth";
 
 type RegisterSocketHandlersDeps = {
   io: Server;
@@ -49,6 +50,8 @@ export const registerSocketHandlers = ({
     if (!data.access) data.access = new Map();
     if (!data.joinedRooms) data.joinedRooms = new Set();
     if (data.principal === undefined) data.principal = null;
+    if (data.apiKeyScopes === undefined) data.apiKeyScopes = null;
+    if (data.apiKeyId === undefined) data.apiKeyId = null;
     return data as SocketState;
   };
 
@@ -78,37 +81,11 @@ export const registerSocketHandlers = ({
     return "#4f46e5";
   };
 
-  const getSocketAuthUserId = async (
-    token?: string,
-  ): Promise<string | null> => {
-    const authEnabled = await authModeService.getAuthEnabled();
-    if (!authEnabled) {
-      return BOOTSTRAP_USER_ID;
-    }
-
-    if (!token) return null;
-
-    try {
-      const decoded = jwt.verify(token, jwtSecret) as Record<string, unknown>;
-      if (
-        typeof decoded.userId !== "string" ||
-        typeof decoded.email !== "string" ||
-        decoded.type !== "access"
-      ) {
-        return null;
-      }
-
-      const user = await prisma.user.findUnique({
-        where: { id: decoded.userId },
-        select: { id: true, isActive: true },
-      });
-
-      if (!user || !user.isActive) return null;
-      return user.id;
-    } catch {
-      return null;
-    }
-  };
+  const resolveSocketAuth = createSocketAuthResolver({
+    prisma,
+    authModeService,
+    jwtSecret,
+  });
 
   const socketsForDrawing = (drawingId: string, guestsOnly: boolean) => {
     const roomId = `drawing_${drawingId}`;
@@ -240,7 +217,11 @@ export const registerSocketHandlers = ({
       if (Object.hasOwn(socket.handshake.auth, "guestSession")) {
         return next(new Error("GUEST_ACCESS_ENDED"));
       }
-      const tokenFromAuth = socket.handshake.auth?.token as string | undefined;
+      const rawAuthToken: unknown = socket.handshake.auth?.token;
+      const tokenFromAuth =
+        typeof rawAuthToken === "string" && rawAuthToken.length > 0
+          ? rawAuthToken
+          : undefined;
       const tokenFromCookie = (() => {
         const cookies = parseCookieHeader(socket.handshake.headers.cookie);
         const value = cookies[ACCESS_TOKEN_COOKIE_NAME];
@@ -248,11 +229,17 @@ export const registerSocketHandlers = ({
           ? value
           : undefined;
       })();
-      const token = tokenFromAuth || tokenFromCookie;
-      const userId = await getSocketAuthUserId(token);
+      // API keys are only honoured when sent explicitly in the handshake auth
+      // payload (never from the query string or a cookie), matching REST,
+      // where they are only accepted as a Bearer header.
+      const auth = tokenFromAuth
+        ? await resolveSocketAuth(tokenFromAuth)
+        : await resolveSocketAuth(tokenFromCookie, { allowApiKey: false });
 
-      if (userId) {
-        state.principal = { kind: "user", userId };
+      if (auth) {
+        state.principal = { kind: "user", userId: auth.userId };
+        state.apiKeyScopes = auth.apiKeyScopes;
+        state.apiKeyId = auth.apiKeyId;
         return next();
       }
 
@@ -293,6 +280,33 @@ export const registerSocketHandlers = ({
         () => scheduleGuestExpiry(expiresAt),
         Math.min(remaining, 2_147_483_647),
       ).unref();
+    };
+
+    // An API key is validated once at the handshake; the socket can live far
+    // longer. Re-check it (revoked, owner deactivated, scopes) before acting
+    // so revoking a key cuts off an open socket. Cached briefly for the
+    // high-frequency events; `fresh` forces a lookup for mutations.
+    let apiKeyCheckedAtMs = Date.now();
+    const ensureApiKeyValid = async (fresh = false): Promise<boolean> => {
+      if (!state.apiKeyId) return true;
+      if (!fresh && Date.now() - apiKeyCheckedAtMs < ACCESS_CACHE_TTL_MS) {
+        return true;
+      }
+      let scopes: string[] | null = null;
+      try {
+        scopes = await revalidateSocketApiKey(prisma, state.apiKeyId);
+      } catch (error) {
+        // Fail closed: if the key cannot be confirmed, do not act on it.
+        console.error("Failed to revalidate socket API key:", error);
+      }
+      if (!scopes) {
+        socket.emit("error", { message: "API key is no longer valid" });
+        socket.disconnect(true);
+        return false;
+      }
+      state.apiKeyScopes = scopes;
+      apiKeyCheckedAtMs = Date.now();
+      return true;
     };
 
     const getCachedOrFreshAccess = async (
@@ -350,6 +364,7 @@ export const registerSocketHandlers = ({
           const drawingId = data?.drawingId;
           if (typeof drawingId !== "string") return;
           const user = data?.user;
+          if (!(await ensureApiKeyValid(true))) return;
           const access = await getCachedOrFreshAccess(drawingId);
           if (!access) {
             socket.emit("error", {
@@ -438,6 +453,7 @@ export const registerSocketHandlers = ({
       if (!drawingId || !state.joinedRooms.has(`drawing_${drawingId}`)) {
         return;
       }
+      if (!(await ensureApiKeyValid())) return;
       // Re-validate through the TTL cache so revoked collaborators stop
       // broadcasting cursors (rather than trusting the stale join-time grant).
       const access = await getCachedOrFreshAccess(drawingId).catch(() => null);
@@ -459,12 +475,42 @@ export const registerSocketHandlers = ({
       });
     });
 
+    socket.on("visible-bounds", async (data) => {
+      const drawingId =
+        typeof data?.drawingId === "string" ? data.drawingId : null;
+      if (!drawingId || !state.joinedRooms.has(`drawing_${drawingId}`)) return;
+      if (!isSceneBounds(data?.bounds)) return;
+      if (!(await ensureApiKeyValid())) return;
+      const access = await getCachedOrFreshAccess(drawingId).catch(() => null);
+      if (!access) {
+        dropDrawingAccess(drawingId);
+        return;
+      }
+      const roomId = `drawing_${drawingId}`;
+      const users = roomUsers.get(roomId) || [];
+      const self = users.find((u) => u.socketId === socket.id);
+      if (!self) return;
+      // Everyone in the room gets every viewport; whether to follow one is
+      // decided client-side, so the server keeps no follower state.
+      socket.volatile.to(roomId).emit("visible-bounds", {
+        drawingId,
+        userId: self.id,
+        bounds: data.bounds,
+        // Only an id present in this drawing; clients ignore others anyway.
+        following: users.some((u) => u.id === data.following)
+          ? data.following
+          : null,
+      });
+    });
+
     socket.on("element-update", async (data) => {
       const drawingId =
         typeof data?.drawingId === "string" ? data.drawingId : null;
       if (!drawingId || !state.joinedRooms.has(`drawing_${drawingId}`)) {
         return;
       }
+
+      if (!(await ensureApiKeyValid(true))) return;
 
       // Enforce edit permission for every mutation event. Mutations bypass
       // the short-TTL access cache so a just-revoked collaborator cannot
@@ -500,6 +546,15 @@ export const registerSocketHandlers = ({
         });
         return;
       }
+      if (
+        state.apiKeyScopes &&
+        !state.apiKeyScopes.includes("drawings:write")
+      ) {
+        socket.emit("error", {
+          message: "API key is not authorized to edit drawings",
+        });
+        return;
+      }
 
       try {
         await emitDrawingScene(
@@ -528,6 +583,7 @@ export const registerSocketHandlers = ({
           !state.joinedRooms.has(`drawing_${drawingId}`)
         )
           return;
+        if (!(await ensureApiKeyValid())) return;
         // Re-validate so revoked collaborators stop broadcasting presence.
         const access = await getCachedOrFreshAccess(drawingId).catch(
           () => null,

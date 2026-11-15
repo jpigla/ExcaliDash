@@ -177,21 +177,28 @@ const ExcalidrawEditor: React.FC<{
     navigate,
     onGuestAccessEnded,
   ]);
-  const { peers, socketMeRef, socketRef, isSyncing, onPointerUpdate } =
-    useEditorCollaboration({
-      drawingId: id,
-      guestShareId,
-      me,
-      isReady,
-      excalidrawAPI,
-      lastSyncedFilesRef,
-      lastSyncedElementOrderSigRef,
-      latestElementsRef,
-      latestFilesRef,
-      computeElementOrderSig,
-      recordElementVersion,
-      onAccessDenied: handleSocketAccessDenied,
-    });
+  const {
+    peers,
+    followedUserId,
+    toggleFollow,
+    socketMeRef,
+    socketRef,
+    isSyncing,
+    onPointerUpdate,
+  } = useEditorCollaboration({
+    drawingId: id,
+    guestShareId,
+    me,
+    isReady,
+    excalidrawAPI,
+    lastSyncedFilesRef,
+    lastSyncedElementOrderSigRef,
+    latestElementsRef,
+    latestFilesRef,
+    computeElementOrderSig,
+    recordElementVersion,
+    onAccessDenied: handleSocketAccessDenied,
+  });
   const { scanNow: scanFileUploads } = useEditorFileUploads({
     canEdit,
     guestShareId,
@@ -419,6 +426,8 @@ const ExcalidrawEditor: React.FC<{
         me={me}
         newName={newName}
         peers={peers}
+        followedUserId={followedUserId}
+        onToggleFollow={toggleFollow}
         theme={theme}
         onBackClick={handleBackClick}
         onCanvasChange={handleCanvasChange}
@@ -428,7 +437,7 @@ const ExcalidrawEditor: React.FC<{
         onNavigateHome={() => navigate("/")}
         onNewNameChange={setNewName}
         onPointerUpdate={onPointerUpdate}
-        onRenameBlur={() => setIsRenaming(false)}
+        onRenameCancel={() => setIsRenaming(false)}
         onRenameStart={handleRenameStart}
         onRenameSubmit={handleRenameSubmit}
         onSetExcalidrawAPI={setExcalidrawAPI}

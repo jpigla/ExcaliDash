@@ -233,6 +233,18 @@ const upload = multer({
     cb(null, true);
   },
 });
+// The bundled nginx strips the /api prefix before proxying, but some reverse
+// proxies forward /api/... as-is. Accept both so the UI keeps working there.
+app.use((req, _res, next) => {
+  if (
+    req.url === "/api" ||
+    req.url.startsWith("/api/") ||
+    req.url.startsWith("/api?")
+  ) {
+    req.url = req.url.slice(4) || "/";
+  }
+  next();
+});
 app.use((req, res, next) => {
   const requestId = uuidv4();
   req.headers["x-request-id"] = requestId;
@@ -508,7 +520,13 @@ const socketHandlers = registerSocketHandlers({
 });
 app.get("/health", async (_req, res) => {
   try {
+    // `SELECT 1` never touches the database file, so a broken SQLite file
+    // (missing WAL, I/O errors, dropped schema) would still look healthy.
+    // Read a real row from a core table so the query goes through the pager.
+    // The response shape and status codes are consumed by the Docker
+    // healthchecks (status === 200), so keep them unchanged.
     await prisma.$queryRaw`SELECT 1`;
+    await prisma.systemConfig.findFirst({ select: { id: true } });
     res.status(200).json({ status: "ok", database: "ok" });
   } catch (error) {
     console.error("Health check failed", error);

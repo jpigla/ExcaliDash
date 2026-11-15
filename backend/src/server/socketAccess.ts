@@ -24,6 +24,11 @@ type AccessCacheEntry = {
 // leaks an entry per failed/short-lived handshake (B5).
 export type SocketState = {
   principal: DrawingPrincipal | null;
+  // Scopes of the API key the socket authenticated with, or null for JWT,
+  // bootstrap and anonymous sockets.
+  apiKeyScopes: string[] | null;
+  // Id of that API key, so the socket can re-check it for revocation.
+  apiKeyId: string | null;
   access: Map<string, AccessCacheEntry>;
   joinedRooms: Set<string>;
 };

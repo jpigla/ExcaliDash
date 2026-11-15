@@ -597,11 +597,15 @@ export const registerDrawingCreateUpdateRoutes = (
         return res.status(404).json({ error: "Drawing not found" });
       }
       invalidateDrawingsCache();
-      if (payload.collectionId !== undefined) {
+
+      // A move can take access away: Trash pauses the link share, and leaving
+      // a shared collection drops its grantees. Re-check collaborators already
+      // in the room. Best-effort, like the sharing routes.
+      if (payload.collectionId !== undefined && revalidateDrawingAccess) {
         try {
-          await revalidateDrawingAccess?.(id);
-        } catch (error) {
-          console.error("Failed to revalidate live drawing access:", error);
+          await revalidateDrawingAccess(id);
+        } catch (err) {
+          console.error("Failed to revalidate live drawing access:", err);
         }
       }
 

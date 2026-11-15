@@ -18,6 +18,7 @@ type UserLike =
       name: string;
       email: string;
       role?: string;
+      avatarVersion?: string | null;
     }
   | null
   | undefined;
@@ -90,7 +91,11 @@ export const SidebarFooter: React.FC<SidebarFooterProps> = ({
           onDragEnter={() => setIsOpen(true)}
           className="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100 dark:text-neutral-200 dark:hover:bg-neutral-800"
         >
-          <UserAvatar name={name} size="sm" />
+          <UserAvatar
+            name={name}
+            avatarVersion={user?.avatarVersion}
+            size="sm"
+          />
           <span className="min-w-0 flex-1 truncate text-left">{name}</span>
           <ChevronUp
             size={16}
@@ -202,7 +207,11 @@ export const SidebarFooter: React.FC<SidebarFooterProps> = ({
       </div>
       {!compact && (
         <div className="flex items-center gap-3 px-2 py-2 text-sm font-semibold text-slate-700 dark:text-neutral-200">
-          <UserAvatar name={name} size="sm" />
+          <UserAvatar
+            name={name}
+            avatarVersion={user?.avatarVersion}
+            size="sm"
+          />
           <span className="min-w-0 truncate">{name}</span>
         </div>
       )}

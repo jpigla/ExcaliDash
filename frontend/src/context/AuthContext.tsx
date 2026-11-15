@@ -28,6 +28,7 @@ export interface User {
   username?: string | null;
   email: string;
   name: string;
+  avatarVersion?: string | null;
   role?: "ADMIN" | "USER" | string;
   mustResetPassword?: boolean;
 }
@@ -306,7 +307,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
 
   const updateUser = (updates: Partial<User>) => {
     setUser((currentUser) => {
-      if (!currentUser) return currentUser;
+      if (!currentUser || (updates.id && updates.id !== currentUser.id)) {
+        return currentUser;
+      }
       const nextUser = { ...currentUser, ...updates };
       localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
       return nextUser;

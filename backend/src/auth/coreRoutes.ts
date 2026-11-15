@@ -530,6 +530,10 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
             message: "Invalid email or password",
           });
         }
+        const avatar = await prisma.userAvatar.findUnique({
+          where: { userId: user.id },
+          select: { version: true },
+        });
         const { accessToken, refreshToken } = generateTokens(
           user.id,
           user.email,
@@ -567,11 +571,12 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
             userAgent: req.headers["user-agent"] || undefined,
           });
         }
-        res.json({
+        res.set("Cache-Control", "no-store").json({
           user: {
             id: user.id,
             email: user.email,
             name: user.name,
+            avatarVersion: avatar?.version ?? null,
             role: user.role,
             mustResetPassword: user.mustResetPassword,
           },
@@ -873,6 +878,7 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
           username: true,
           email: true,
           name: true,
+          avatar: { select: { version: true } },
           role: true,
           mustResetPassword: true,
           createdAt: true,
@@ -884,7 +890,15 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
           .status(404)
           .json({ error: "Not found", message: "User not found" });
       }
-      res.json({ user });
+      const { avatar, ...account } = user;
+      res.set("Cache-Control", "no-store").json({
+        user: {
+          ...account,
+          avatarVersion: req.user.impersonatorId
+            ? null
+            : (avatar?.version ?? null),
+        },
+      });
     } catch (error) {
       console.error("Get user error:", error);
       res.status(500).json({

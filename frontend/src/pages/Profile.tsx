@@ -1,13 +1,14 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Layout } from "../components/Layout";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import * as api from "../api";
 import type { Collection } from "../types";
-import { Save } from "lucide-react";
+import { Camera, Save } from "lucide-react";
 import { displayFontFamily } from "../utils/displayFont";
 import { PasswordCard } from "./profile/PasswordCard";
 import { getApiErrorMessage } from "../utils/getApiErrorMessage";
+import { prepareProfilePicture } from "./profile/prepareProfilePicture";
 import { UserAvatar } from "../components/UserAvatar";
 import {
   SettingsCard,
@@ -31,6 +32,9 @@ export const Profile: React.FC = () => {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+  const avatarInput = useRef<HTMLInputElement>(null);
+  const [avatarLoading, setAvatarLoading] = useState(false);
+
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [showEmailForm, setShowEmailForm] = useState(false);
@@ -42,17 +46,20 @@ export const Profile: React.FC = () => {
       try {
         const collectionsData = await api.getCollections();
         setCollections(collectionsData);
-
-        if (authUser) {
-          setName(authUser.name);
-          setEmail(authUser.email);
-        }
       } catch (err) {
         console.error("Failed to fetch data:", err);
       }
     };
     fetchData();
-  }, [authEnabled, authUser, navigate]);
+  }, [authEnabled, authUser?.id]);
+
+  useEffect(() => {
+    setName(authUser?.name ?? "");
+  }, [authUser?.id, authUser?.name]);
+
+  useEffect(() => {
+    setEmail(authUser?.email ?? "");
+  }, [authUser?.id, authUser?.email]);
 
   const handleSelectCollection = (id: string | null | undefined) => {
     if (id === undefined) navigate("/");
@@ -75,6 +82,23 @@ export const Profile: React.FC = () => {
   const handleDeleteCollection = async (id: string) => {
     setCollections((prev) => prev.filter((c) => c.id !== id));
     await api.deleteCollection(id);
+  };
+
+  const handleUpdateAvatar = async (file: File | null) => {
+    setAvatarLoading(true);
+    setError("");
+    setSuccess("");
+    try {
+      const { user } = await api.updateProfilePicture(
+        file ? await prepareProfilePicture(file) : null,
+      );
+      updateUser(user);
+      setSuccess(file ? "Profile picture updated" : "Profile picture removed");
+    } catch (err: unknown) {
+      setError(getApiErrorMessage(err, "Failed to update profile picture"));
+    } finally {
+      setAvatarLoading(false);
+    }
   };
 
   const handleUpdateName = async () => {
@@ -174,14 +198,20 @@ export const Profile: React.FC = () => {
         </h1>
 
         {success && (
-          <div className="mb-4 p-3.5 bg-green-50 dark:bg-green-900/20 border-2 border-green-200 dark:border-green-800 rounded-xl">
+          <div
+            role="status"
+            className="mb-4 p-3.5 bg-green-50 dark:bg-green-900/20 border-2 border-green-200 dark:border-green-800 rounded-xl"
+          >
             <p className="text-green-800 dark:text-green-200 font-medium">
               {success}
             </p>
           </div>
         )}
         {error && (
-          <div className="mb-4 p-3.5 bg-red-50 dark:bg-red-900/20 border-2 border-red-200 dark:border-red-800 rounded-xl">
+          <div
+            role="alert"
+            className="mb-4 p-3.5 bg-red-50 dark:bg-red-900/20 border-2 border-red-200 dark:border-red-800 rounded-xl"
+          >
             <p className="text-red-800 dark:text-red-200 font-medium">
               {error}
             </p>
@@ -206,7 +236,11 @@ export const Profile: React.FC = () => {
                 {authUser && (
                   <div className="relative overflow-hidden bg-indigo-50/70 px-5 py-5 dark:bg-indigo-950/20 sm:px-6">
                     <div className="relative flex flex-wrap items-center gap-5">
-                      <UserAvatar name={authUser.name} size="lg" />
+                      <UserAvatar
+                        name={authUser.name}
+                        avatarVersion={authUser.avatarVersion}
+                        size="lg"
+                      />
                       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                         <input
                           id="name"
@@ -231,6 +265,43 @@ export const Profile: React.FC = () => {
                           Save
                         </button>
                       </div>
+                    </div>
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      <input
+                        ref={avatarInput}
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        aria-label="Profile picture"
+                        hidden
+                        onChange={(event) => {
+                          const file = event.currentTarget.files?.[0];
+                          event.currentTarget.value = "";
+                          if (file) void handleUpdateAvatar(file);
+                        }}
+                      />
+                      <button
+                        type="button"
+                        disabled={mustResetPassword || avatarLoading}
+                        className={settingsButtonClass}
+                        onClick={() => avatarInput.current?.click()}
+                      >
+                        <Camera size={14} />
+                        {avatarLoading
+                          ? "Saving picture…"
+                          : authUser.avatarVersion
+                            ? "Change picture"
+                            : "Upload picture"}
+                      </button>
+                      {authUser.avatarVersion && (
+                        <button
+                          type="button"
+                          disabled={mustResetPassword || avatarLoading}
+                          className={settingsButtonClass}
+                          onClick={() => void handleUpdateAvatar(null)}
+                        >
+                          Remove picture
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}

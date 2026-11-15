@@ -27,6 +27,7 @@ import { config } from "./config";
 import { authModeService, requireAuth, optionalAuth } from "./middleware/auth";
 import { errorHandler, asyncHandler } from "./middleware/errorHandler";
 import authRouter from "./auth";
+import { AVATAR_PATH } from "./auth/accountAvatarRoutes";
 import { logAuditEvent } from "./utils/audit";
 import { registerDashboardRoutes } from "./routes/dashboard";
 import { registerImportExportRoutes } from "./routes/importExport";
@@ -293,8 +294,23 @@ app.use(
     exposedHeaders: ["x-csrf-token", "x-request-id"],
   }),
 );
-app.use(express.json({ limit: BODY_LIMIT }));
-app.use(express.urlencoded({ extended: true, limit: BODY_LIMIT }));
+const parseRequestBody = express
+  .Router()
+  .use(
+    express.json({ limit: BODY_LIMIT }),
+    express.urlencoded({ extended: true, limit: BODY_LIMIT }),
+  );
+app.use((req, res, next) => {
+  const path = req.path.toLowerCase().replace(/\/$/, "");
+  if (
+    path === `/auth${AVATAR_PATH}` &&
+    ["PUT", "DELETE"].includes(req.method)
+  ) {
+    // Check the account and CSRF token before consuming the bounded avatar body.
+    return next();
+  }
+  return parseRequestBody(req, res, next);
+});
 app.use((req, res, next) => {
   const requestId = req.headers["x-request-id"] || "unknown";
   const contentLength = req.headers["content-length"];

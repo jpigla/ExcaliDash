@@ -19,6 +19,7 @@ model User {
   mustResetPassword   Boolean             @default(false)
   isActive            Boolean             @default(true)
   preferences         String?
+  avatar              UserAvatar?
   authIdentities      AuthIdentity[]
   drawings            Drawing[]
   collections         Collection[]
@@ -31,6 +32,13 @@ model User {
   chatGptConnection   ChatGptConnection?
   createdAt           DateTime            @default(now())
   updatedAt           DateTime            @updatedAt
+}
+
+model UserAvatar {
+  userId  String @id
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  version String
+  png     Bytes
 }
 
 model SystemConfig {

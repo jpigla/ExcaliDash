@@ -52,6 +52,7 @@ export interface AuthUser {
   username?: string | null;
   email: string;
   name: string;
+  avatarVersion?: string | null;
   role?: string;
   mustResetPassword?: boolean;
 }
@@ -137,6 +138,19 @@ export const authMe = async (): Promise<{ user: AuthUser }> => {
   const response = await axios.get<{ user: AuthUser }>(`${API_URL}/auth/me`, {
     withCredentials: true,
   });
+  return response.data;
+};
+
+export const updateProfilePicture = async (pixels: ArrayBuffer | null) => {
+  type AvatarResponse = {
+    user: { id: string; avatarVersion: string | null };
+  };
+  const path = "/auth/profile/avatar";
+  const response = pixels
+    ? await api.put<AvatarResponse>(path, pixels, {
+        headers: { "Content-Type": "application/octet-stream" },
+      })
+    : await api.delete<AvatarResponse>(path);
   return response.data;
 };
 

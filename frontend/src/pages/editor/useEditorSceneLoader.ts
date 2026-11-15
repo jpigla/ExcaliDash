@@ -10,6 +10,7 @@ import {
   isGuestElementTombstone,
   isInlineImageFile,
 } from "./shared";
+import { resetLibrarySync } from "./librarySync";
 
 type AccessLevel = "none" | "view" | "edit" | "owner";
 
@@ -142,6 +143,7 @@ export const useEditorSceneLoader = ({
           libraryItemsPromise,
         ]);
         if (cancelled) return;
+        if (userIdKey) void resetLibrarySync(libraryItems);
         setDrawingName(data.name);
         setAccessLevel(
           data.accessLevel === "view" ||

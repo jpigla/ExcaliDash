@@ -214,7 +214,12 @@ export const getDrawingPreview = async (id: string): Promise<string | null> => {
   return typeof preview === "string" ? normalizePreviewSvg(preview) : null;
 };
 
-export type ShareResolvedUser = { id: string; name: string; email: string };
+export type ShareResolvedUser = {
+  id: string;
+  name: string;
+  email: string;
+  avatar?: { version: string } | null;
+};
 
 export const resolveShareUsers = async (
   drawingId: string,

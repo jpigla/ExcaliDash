@@ -424,6 +424,7 @@ const ExcalidrawEditor: React.FC<{
         langCode={langCode}
         loadError={loadError}
         me={me}
+        myAvatarVersion={user?.avatarVersion}
         newName={newName}
         peers={peers}
         followedUserId={followedUserId}

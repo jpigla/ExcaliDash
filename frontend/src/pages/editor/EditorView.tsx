@@ -19,6 +19,7 @@ import { InlineEditInput } from "../../components/InlineEditInput";
 import { GridStepSelector } from "../../components/GridStepSelector";
 import { ShareModal } from "../../components/ShareModal";
 import { UserAvatar as ProfileAvatar } from "../../components/UserAvatar";
+import { scopedAvatarPath } from "../../utils/profileAvatar";
 import type { UserIdentity } from "../../utils/identity";
 import { UIOptions, validateEmbeddableUrl } from "./shared";
 import type { Peer } from "./useEditorCollaboration";
@@ -48,6 +49,7 @@ type EditorViewProps = {
   langCode: string;
   loadError: string | null;
   me: UserIdentity;
+  myAvatarVersion?: string | null;
   newName: string;
   peers: Peer[];
   followedUserId: string | null;
@@ -83,12 +85,16 @@ type EditorViewProps = {
 const CollaboratorAvatar = ({
   user,
   label,
+  avatarVersion,
+  avatarPath,
   inactive = false,
   followed = false,
   onClick,
 }: {
   user: UserIdentity;
   label: string;
+  avatarVersion?: string | null;
+  avatarPath?: string;
   inactive?: boolean;
   followed?: boolean;
   onClick?: () => void;
@@ -99,6 +105,8 @@ const CollaboratorAvatar = ({
   const avatar = (
     <ProfileAvatar
       name={user.name}
+      avatarVersion={avatarVersion}
+      avatarPath={avatarPath}
       size="toolbar"
       className={clsx(
         "transition-all duration-300",
@@ -153,6 +161,7 @@ export const EditorView: React.FC<EditorViewProps> = ({
   langCode,
   loadError,
   me,
+  myAvatarVersion,
   newName,
   peers,
   followedUserId,
@@ -295,7 +304,11 @@ export const EditorView: React.FC<EditorViewProps> = ({
         )}
         <div className="h-6 w-px bg-gray-300 dark:bg-gray-700" />
         <div className="flex items-center">
-          <CollaboratorAvatar user={me} label={`${me.name} (You)`} />
+          <CollaboratorAvatar
+            user={me}
+            label={`${me.name} (You)`}
+            avatarVersion={myAvatarVersion}
+          />
           {peers.length > 0 ? (
             <>
               <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-2" />
@@ -304,6 +317,14 @@ export const EditorView: React.FC<EditorViewProps> = ({
                   <CollaboratorAvatar
                     key={peer.id}
                     user={peer}
+                    avatarPath={
+                      id && !isGuest
+                        ? scopedAvatarPath("drawing", id, {
+                            id: peer.id,
+                            version: peer.avatarVersion,
+                          })
+                        : undefined
+                    }
                     label={peer.name}
                     inactive={!peer.isActive}
                     followed={peer.id === followedUserId}

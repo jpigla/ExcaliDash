@@ -2,10 +2,19 @@ import React from "react";
 import { Eye, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import * as api from "../../api";
 import { PlayfulSelect } from "../PlayfulSelect";
+import { scopedAvatarPath } from "../../utils/profileAvatar";
 import { UserAvatar } from "../UserAvatar";
 
 type Props = {
-  user: { name?: string | null; email?: string | null } | null | undefined;
+  drawingId: string;
+  user:
+    | {
+        name?: string | null;
+        email?: string | null;
+        avatarVersion?: string | null;
+      }
+    | null
+    | undefined;
   sharing: { permissions: api.DrawingPermissionRow[] } | null;
   userQuery: string;
   userPermission: "view" | "edit";
@@ -26,6 +35,7 @@ const permissionOptions = [
 ];
 
 export const SharePeopleSection: React.FC<Props> = ({
+  drawingId,
   user,
   sharing,
   userQuery,
@@ -72,7 +82,14 @@ export const SharePeopleSection: React.FC<Props> = ({
               onClick={() => handleAddUser(candidate.id)}
               className="ui-menu-item gap-3"
             >
-              <UserAvatar name={candidate.name} size="sm" />
+              <UserAvatar
+                name={candidate.name}
+                avatarPath={scopedAvatarPath("drawing-share", drawingId, {
+                  id: candidate.id,
+                  version: candidate.avatar?.version,
+                })}
+                size="sm"
+              />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-xs font-semibold text-slate-850 dark:text-neutral-100">
                   {candidate.name}
@@ -102,7 +119,11 @@ export const SharePeopleSection: React.FC<Props> = ({
       </h3>
       <div className="divide-y divide-slate-100 dark:divide-neutral-800">
         <div className="flex items-center gap-3 py-2">
-          <UserAvatar name={user?.name || "User"} size="sm" />
+          <UserAvatar
+            name={user?.name || "User"}
+            avatarVersion={user?.avatarVersion}
+            size="sm"
+          />
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold text-slate-800 dark:text-neutral-100">
               {user?.name}{" "}
@@ -121,7 +142,14 @@ export const SharePeopleSection: React.FC<Props> = ({
 
         {(sharing?.permissions || []).map((permission) => (
           <div key={permission.id} className="flex items-center gap-3 py-2">
-            <UserAvatar name={permission.granteeUser.name} size="sm" />
+            <UserAvatar
+              name={permission.granteeUser.name}
+              avatarPath={scopedAvatarPath("drawing-share", drawingId, {
+                id: permission.granteeUser.id,
+                version: permission.granteeUser.avatar?.version,
+              })}
+              size="sm"
+            />
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-semibold text-slate-800 dark:text-neutral-100">
                 {permission.granteeUser.name}

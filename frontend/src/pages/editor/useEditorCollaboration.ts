@@ -21,6 +21,7 @@ import {
   isSceneBounds,
 } from "./shared";
 import * as api from "../../api";
+import { scopedAvatarPath } from "../../utils/profileAvatar";
 import { reconcileElements } from "../../utils/sync";
 
 type SceneBounds = [number, number, number, number];
@@ -28,6 +29,7 @@ type SceneBounds = [number, number, number, number];
 export interface Peer extends UserIdentity {
   socketId: string;
   isActive: boolean;
+  avatarVersion?: string;
 }
 
 type UseEditorCollaborationInput = {
@@ -137,7 +139,7 @@ export const useEditorCollaboration = ({
           excalidrawAPI.current.getAppState().collaborators || [],
         );
         cursorBuffer.current.forEach((data, userId) => {
-          collaborators.set(userId, data);
+          collaborators.set(userId, { ...collaborators.get(userId), ...data });
         });
         cursorBuffer.current.clear();
         const { sceneUpdate } = buildRemoteSceneUpdate({ collaborators });
@@ -239,11 +241,18 @@ export const useEditorCollaboration = ({
         if (!peersByUser.has(userId)) collaborators.delete(userId);
       });
       peersByUser.forEach((user, userId) => {
+        const avatarPath = !guestShareId
+          ? scopedAvatarPath("drawing", drawingId, {
+              id: userId,
+              version: user.avatarVersion,
+            })
+          : undefined;
         collaborators.set(userId, {
           username: user.name,
           color: { background: user.color, stroke: user.color },
           id: userId,
           ...collaborators.get(userId),
+          avatarUrl: avatarPath ? `${api.API_URL}${avatarPath}` : undefined,
           userState: user.isActive ? "active" : "away",
         });
       });

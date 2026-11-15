@@ -30,6 +30,7 @@ export interface CollectionShareUser {
   id: string;
   name: string;
   email: string;
+  avatar?: { version: string } | null;
 }
 
 export interface CollectionShareRow {

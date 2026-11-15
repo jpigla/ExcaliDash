@@ -1,4 +1,5 @@
 import express from "express";
+import { registerDashboardProfileAvatars } from "./profileAvatars";
 import { registerCollectionRoutes } from "./collections";
 import { registerDrawingRoutes } from "./drawings";
 import { registerLibraryRoutes } from "./library";
@@ -10,6 +11,7 @@ export const registerDashboardRoutes = (
 ) => {
   registerDrawingRoutes(app, deps);
   registerCollectionRoutes(app, deps);
+  registerDashboardProfileAvatars(app, deps);
   registerLibraryRoutes(app, deps);
 };
 

@@ -162,6 +162,137 @@ for (const [role, identity] of [
   });
 }
 
+test("uploaded avatars appear in the board and sharing dialogs while guests see initials", async ({
+  page,
+  browser,
+}) => {
+  await signIn(page);
+  const memberContext = await browser.newContext();
+  const guestContext = await browser.newContext();
+  const memberPage = await memberContext.newPage();
+  const guestPage = await guestContext.newPage();
+
+  const withPicture = (page: Page, name: string) =>
+    page
+      .getByRole("img", { name: `${name}'s profile picture`, exact: true })
+      .locator("img");
+  const avatarEndpoint = `${API_URL}/auth/profile/avatar`;
+  const savePicture = async (request: APIRequestContext, value: number) => {
+    const response = await request.put(avatarEndpoint, {
+      headers: {
+        ...(await getCsrfHeaders(request)),
+        "Content-Type": "application/octet-stream",
+      },
+      data: Buffer.alloc(128 * 128 * 4, value),
+    });
+    expect(response.status()).toBe(200);
+  };
+
+  const collectionName = `Avatar collection ${Date.now()}`;
+  const collectionResponse = await page.request.post(`${API_URL}/collections`, {
+    headers: await getCsrfHeaders(page.request),
+    data: { name: collectionName },
+  });
+  expect(collectionResponse.ok()).toBe(true);
+  const collection = await collectionResponse.json();
+  const drawing = await createDrawing(page.request, {
+    name: "Avatar collaboration",
+  });
+
+  try {
+    await signIn(memberPage, viewer);
+    await savePicture(page.request, 255);
+    await savePicture(memberPage.request, 180);
+
+    await page.reload();
+    await page
+      .getByText(collectionName, { exact: true })
+      .click({ button: "right" });
+    await page
+      .getByRole("button", { name: "Share Collection", exact: true })
+      .click();
+    await expect(withPicture(page, "E2E Admin").last()).toHaveJSProperty(
+      "naturalWidth",
+      128,
+    );
+    await page
+      .getByPlaceholder("Add people by name or email")
+      .fill(viewer.email);
+    await expect(withPicture(page, "E2E Viewer")).toHaveJSProperty(
+      "naturalWidth",
+      128,
+    );
+    await page.getByRole("button", { name: /E2E Viewer/ }).click();
+    await expect(withPicture(page, "E2E Viewer")).toHaveJSProperty(
+      "naturalWidth",
+      128,
+    );
+
+    await page.goto(`/editor/${drawing.id}`);
+    const ownerToolbar = page.getByTestId("collaborator-avatar");
+    await expect(ownerToolbar.locator("img")).toHaveJSProperty(
+      "naturalWidth",
+      128,
+    );
+    await page.getByTitle("Share", { exact: true }).click();
+    await page
+      .getByPlaceholder("Add people by name or email")
+      .fill(viewer.email);
+    await expect(withPicture(page, "E2E Viewer")).toHaveJSProperty(
+      "naturalWidth",
+      128,
+    );
+    await page
+      .getByRole("button", { name: /Give E2E Viewer view access/ })
+      .click();
+    await expect(withPicture(page, "E2E Viewer")).toHaveJSProperty(
+      "naturalWidth",
+      128,
+    );
+
+    await memberPage.goto(`/editor/${drawing.id}`);
+    const memberToolbar = memberPage.getByTestId("collaborator-avatar");
+    await expect(memberToolbar).toHaveCount(2);
+    await expect(ownerToolbar).toHaveCount(2);
+    for (const toolbar of [ownerToolbar, memberToolbar]) {
+      await expect(toolbar.nth(0).locator("img")).toHaveJSProperty(
+        "naturalWidth",
+        128,
+      );
+      await expect(toolbar.nth(1).locator("img")).toHaveJSProperty(
+        "naturalWidth",
+        128,
+      );
+    }
+
+    const shared = await page.request.post(
+      `${API_URL}/drawings/${drawing.id}/link-shares`,
+      {
+        headers: await getCsrfHeaders(page.request),
+        data: { permission: "view" },
+      },
+    );
+    expect(shared.ok()).toBe(true);
+    const { share } = await shared.json();
+    await guestPage.goto(`/shared/${drawing.id}/${share.id}#${share.token}`);
+    const guestToolbar = guestPage.getByTestId("collaborator-avatar");
+    await expect(guestToolbar).toHaveCount(3);
+    await expect(guestToolbar.locator("img")).toHaveCount(0);
+  } finally {
+    await page.request.delete(avatarEndpoint, {
+      headers: await getCsrfHeaders(page.request),
+    });
+    await memberPage.request.delete(avatarEndpoint, {
+      headers: await getCsrfHeaders(memberPage.request),
+    });
+    await Promise.all([memberContext.close(), guestContext.close()]);
+    await deleteDrawing(page.request, drawing.id);
+    await page.request.delete(`${API_URL}/collections/${collection.id}`, {
+      headers: await getCsrfHeaders(page.request),
+    });
+  }
+});
+
 test("a viewer cannot discover private drawings, edit a view-only share, or retain revoked access", async ({
   page,
   request,

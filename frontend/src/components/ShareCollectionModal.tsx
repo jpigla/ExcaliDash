@@ -8,6 +8,7 @@ import type {
 } from "../types";
 import { useAuth } from "../context/AuthContext";
 import { RoleSelect } from "./RoleSelect";
+import { scopedAvatarPath } from "../utils/profileAvatar";
 import { UserAvatar } from "./UserAvatar";
 
 type Props = {
@@ -202,7 +203,15 @@ export const ShareCollectionModal: React.FC<Props> = ({
                     onClick={() => handleAdd(u)}
                     className="ui-menu-item gap-3 border-b border-slate-100 px-4 py-2.5 last:border-b-0 dark:border-neutral-800"
                   >
-                    <UserAvatar name={u.name} size="sm" />
+                    <UserAvatar
+                      name={u.name}
+                      avatarPath={scopedAvatarPath(
+                        "collection-share",
+                        collectionId,
+                        { id: u.id, version: u.avatar?.version },
+                      )}
+                      size="sm"
+                    />
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-bold text-slate-900 dark:text-neutral-100 truncate">
                         {u.name}
@@ -231,7 +240,11 @@ export const ShareCollectionModal: React.FC<Props> = ({
             <div className="space-y-0.5">
               {/* Owner row */}
               <div className="flex items-center gap-3 px-1 py-1.5 min-h-[48px]">
-                <UserAvatar name={user?.name || "User"} size="sm" />
+                <UserAvatar
+                  name={user?.name || "User"}
+                  avatarVersion={user?.avatarVersion}
+                  size="sm"
+                />
                 <div className="flex-1 min-w-0">
                   <div className="text-xs font-bold text-slate-900 dark:text-neutral-100 leading-tight">
                     {user?.name}{" "}
@@ -262,7 +275,18 @@ export const ShareCollectionModal: React.FC<Props> = ({
                   key={s.id}
                   className="flex items-center gap-3 px-1 py-1.5 min-h-[48px] group"
                 >
-                  <UserAvatar name={s.granteeUser.name} size="sm" />
+                  <UserAvatar
+                    name={s.granteeUser.name}
+                    avatarPath={scopedAvatarPath(
+                      "collection-share",
+                      collectionId,
+                      {
+                        id: s.granteeUser.id,
+                        version: s.granteeUser.avatar?.version,
+                      },
+                    )}
+                    size="sm"
+                  />
                   <div className="flex-1 min-w-0">
                     <div className="text-xs font-bold text-slate-900 dark:text-neutral-100 leading-tight truncate">
                       {s.granteeUser.name}

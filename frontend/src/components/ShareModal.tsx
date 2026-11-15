@@ -201,6 +201,7 @@ export const ShareModal: React.FC<Props> = ({
           )}
 
           <SharePeopleSection
+            drawingId={drawingId}
             user={user}
             sharing={sharing}
             userQuery={userQuery}

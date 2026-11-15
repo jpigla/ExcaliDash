@@ -12,6 +12,7 @@ export interface PresenceUser {
   color: string;
   socketId: string;
   isActive: boolean;
+  avatarVersion?: string;
 }
 
 type AccessCacheEntry = {

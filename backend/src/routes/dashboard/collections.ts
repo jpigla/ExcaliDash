@@ -1,4 +1,5 @@
 import express from "express";
+import { shareUserFields } from "./profileAvatars";
 import { DashboardRouteDeps } from "./types";
 import { getUserTrashCollectionId, isTrashCollectionId } from "./trash";
 
@@ -217,7 +218,7 @@ export const registerCollectionRoutes = (
       const shares = await prisma.collectionShare.findMany({
         where: { collectionId: id },
         include: {
-          granteeUser: { select: { id: true, name: true, email: true } },
+          granteeUser: { select: shareUserFields },
         },
         orderBy: { createdAt: "asc" },
       });
@@ -281,7 +282,7 @@ export const registerCollectionRoutes = (
           createdByUserId: req.user.id,
         },
         include: {
-          granteeUser: { select: { id: true, name: true, email: true } },
+          granteeUser: { select: shareUserFields },
         },
       });
       invalidateDrawingsCache();
@@ -377,7 +378,7 @@ export const registerCollectionRoutes = (
             { username: { contains: q } },
           ],
         },
-        select: { id: true, name: true, email: true },
+        select: shareUserFields,
         take: 8,
       });
 

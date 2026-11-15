@@ -98,6 +98,22 @@ export const registerSocketHandlers = ({
       );
   };
 
+  const emitPresence = (roomId: string, users: PresenceUser[]) => {
+    const guestIds = socketsForDrawing(
+      roomId.slice("drawing_".length),
+      true,
+    ).flatMap((socket) => (socket ? [socket.id] : []));
+    if (!guestIds.length) {
+      io.to(roomId).emit("presence-update", users);
+      return;
+    }
+    io.to(roomId).except(guestIds).emit("presence-update", users);
+    io.to(guestIds).emit(
+      "presence-update",
+      users.map(({ avatarVersion: _avatarVersion, ...user }) => user),
+    );
+  };
+
   const revalidateDrawingAccess = async (
     drawingId: string,
     guestsOnly = false,
@@ -108,7 +124,7 @@ export const registerSocketHandlers = ({
       drawingId,
       roomUsers,
       sockets,
-      emitPresence: (rid, users) => io.to(rid).emit("presence-update", users),
+      emitPresence,
     });
   };
 
@@ -159,7 +175,7 @@ export const registerSocketHandlers = ({
       drawingId,
       roomUsers,
       sockets: guests,
-      emitPresence: (rid, users) => io.to(rid).emit("presence-update", users),
+      emitPresence,
     });
     // A write may be revoked while the recipient checks are in flight.
     if (guestSender && sender) {
@@ -340,10 +356,7 @@ export const registerSocketHandlers = ({
       const roomId = `drawing_${drawingId}`;
       const changed = removeSocketFromRooms(roomUsers, [roomId], socket.id);
       for (const changedRoomId of changed) {
-        io.to(changedRoomId).emit(
-          "presence-update",
-          roomUsers.get(changedRoomId) ?? [],
-        );
+        emitPresence(changedRoomId, roomUsers.get(changedRoomId) ?? []);
       }
       state.joinedRooms.delete(roomId);
       socket.leave(roomId);
@@ -383,6 +396,7 @@ export const registerSocketHandlers = ({
               ? user.id.trim().slice(0, 200)
               : socket.id;
           let trustedName = toPresenceName(user?.name);
+          let avatarVersion: string | undefined;
 
           if (!principal) {
             // Never trust client-provided ids for anonymous/share-link sessions; prevent spoofing/collisions.
@@ -393,11 +407,16 @@ export const registerSocketHandlers = ({
           ) {
             const account = await prisma.user.findUnique({
               where: { id: principal.userId },
-              select: { id: true, name: true },
+              select: {
+                id: true,
+                name: true,
+                avatar: { select: { version: true } },
+              },
             });
             if (account) {
               trustedUserId = account.id;
               trustedName = toPresenceName(account.name);
+              avatarVersion = account.avatar?.version;
             } else {
               // Lookup failed mid-session: fall back to a server-derived id
               // rather than echoing the client-supplied one.
@@ -415,6 +434,7 @@ export const registerSocketHandlers = ({
             color: toPresenceColor(user?.color),
             socketId: socket.id,
             isActive: true,
+            avatarVersion,
           };
 
           // Presence is keyed per-SOCKET, not per-user id: two tabs of the
@@ -428,7 +448,7 @@ export const registerSocketHandlers = ({
           filteredUsers.push(newUser);
           roomUsers.set(roomId, filteredUsers);
 
-          io.to(roomId).emit("presence-update", filteredUsers);
+          emitPresence(roomId, filteredUsers);
           // Let the client know what the server will use as its canonical presence identity.
           if (typeof ack === "function") {
             ack({
@@ -598,7 +618,7 @@ export const registerSocketHandlers = ({
           const user = users.find((u) => u.socketId === socket.id);
           if (user) {
             user.isActive = isActive;
-            io.to(roomId).emit("presence-update", users);
+            emitPresence(roomId, users);
           }
         }
       },
@@ -613,7 +633,7 @@ export const registerSocketHandlers = ({
         socket.id,
       );
       for (const roomId of changed) {
-        io.to(roomId).emit("presence-update", roomUsers.get(roomId) ?? []);
+        emitPresence(roomId, roomUsers.get(roomId) ?? []);
       }
       state.joinedRooms.clear();
       state.access.clear();

@@ -3,12 +3,11 @@ import express, { type RequestHandler } from "express";
 import rateLimit from "express-rate-limit";
 import { logAuditEvent } from "../utils/audit";
 import type { RegisterAccountRoutesDeps } from "./accountRoutes";
+import { sendProfileAvatar } from "./profileAvatarResponse";
 import { AVATAR_PIXEL_BYTES, encodeProfileAvatar } from "./profileAvatarPng";
 
 export const AVATAR_PATH = "/profile/avatar";
 const AVATAR_MEDIA_TYPE = "application/octet-stream";
-const VERSION_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const parsePixels = express.raw({
   type: AVATAR_MEDIA_TYPE,
   limit: AVATAR_PIXEL_BYTES,
@@ -131,36 +130,13 @@ export const registerAccountAvatarRoutes = ({
     requireAuth,
     requireOwnSession,
     async (req, res) => {
-      const { version } = req.params;
-      if (typeof version !== "string" || !VERSION_PATTERN.test(version)) {
-        return res.sendStatus(404);
-      }
-
-      const where = { userId: req.user!.id, version };
-      const etag = `"${version}"`;
-      const applyCacheHeaders = () => {
-        res.set({ "Cache-Control": "private, no-cache", ETag: etag });
-        res.vary("Cookie");
-        res.vary("Authorization");
-      };
-
-      // A revalidation only needs an ownership/version check, not the PNG blob.
-      if (req.get("If-None-Match") === etag) {
-        const match = await prisma.userAvatar.findUnique({
-          where,
-          select: { userId: true },
-        });
-        if (!match) return res.sendStatus(404);
-        applyCacheHeaders();
-        return res.status(304).end();
-      }
-      const avatar = await prisma.userAvatar.findUnique({
-        where,
-        select: { png: true },
-      });
-      if (!avatar) return res.sendStatus(404);
-      applyCacheHeaders();
-      return res.type("png").send(avatar.png);
+      return sendProfileAvatar(
+        prisma,
+        req,
+        res,
+        req.user!.id,
+        req.params.version,
+      );
     },
   );
 };

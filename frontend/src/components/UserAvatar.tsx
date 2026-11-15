@@ -6,6 +6,7 @@ import { getInitialsFromName } from "../utils/user";
 type UserAvatarProps = {
   name: string;
   avatarVersion?: string | null;
+  avatarPath?: string;
   size?: "sm" | "toolbar" | "md" | "lg";
   className?: string;
 };
@@ -20,23 +21,29 @@ const sizeClasses = {
 export const UserAvatar: React.FC<UserAvatarProps> = ({
   name,
   avatarVersion,
+  avatarPath,
   size = "md",
   className,
 }) => {
   const [failedImage, setFailedImage] = React.useState<string>();
+  const path =
+    avatarPath ??
+    (avatarVersion
+      ? `/auth/profile/avatar/${encodeURIComponent(avatarVersion)}`
+      : undefined);
   return (
     <div
       className={clsx("playful-avatar", sizeClasses[size], className)}
       aria-label={`${name}'s profile picture`}
       role="img"
     >
-      {avatarVersion && avatarVersion !== failedImage ? (
+      {path && path !== failedImage ? (
         <img
-          src={`${API_URL}/auth/profile/avatar/${encodeURIComponent(avatarVersion)}`}
+          src={`${API_URL}${path}`}
           crossOrigin="use-credentials"
           alt=""
           className="h-full w-full rounded-[inherit] object-cover"
-          onError={() => setFailedImage(avatarVersion)}
+          onError={() => setFailedImage(path)}
         />
       ) : (
         getInitialsFromName(name)

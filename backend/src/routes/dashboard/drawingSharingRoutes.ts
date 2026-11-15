@@ -1,4 +1,5 @@
 import express from "express";
+import { shareUserFields } from "./profileAvatars";
 import { z } from "zod";
 import {
   decryptGuestLinkToken,
@@ -145,7 +146,7 @@ export const registerDrawingSharingRoutes = (
             { username: { contains: q } },
           ],
         },
-        select: { id: true, name: true, email: true },
+        select: shareUserFields,
         take: 10,
       });
 
@@ -177,7 +178,7 @@ export const registerDrawingSharingRoutes = (
             permission: true,
             createdAt: true,
             updatedAt: true,
-            granteeUser: { select: { id: true, name: true, email: true } },
+            granteeUser: { select: shareUserFields },
           },
           orderBy: { createdAt: "desc" },
         }),
@@ -258,7 +259,7 @@ export const registerDrawingSharingRoutes = (
           permission: true,
           createdAt: true,
           updatedAt: true,
-          granteeUser: { select: { id: true, name: true, email: true } },
+          granteeUser: { select: shareUserFields },
         },
       });
 

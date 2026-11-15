@@ -186,6 +186,81 @@ describe("Authenticated profile pictures", () => {
       .expect(404);
   });
 
+  it("scopes shared image reads to board members and owners of the sharing dialog", async () => {
+    const { body } = await put(pixels).expect(200);
+    const version = body.user.avatarVersion;
+    const collection = await prisma.collection.create({
+      data: { name: "Avatar collection", userId: otherId },
+    });
+    const drawing = await prisma.drawing.create({
+      data: {
+        name: "Avatar board",
+        userId: otherId,
+        collectionId: collection.id,
+        elements: "[]",
+        appState: "{}",
+      },
+    });
+    const board = `/api/drawings/${drawing.id}`;
+    const folder = `/api/collections/${collection.id}`;
+    const boardAvatar = `${board}/avatars/${ownerId}/${version}`;
+    const etag = `"${version}"`;
+
+    await agent
+      .get(boardAvatar)
+      .set("Authorization", bearer(otherId))
+      .expect(404);
+    await agent
+      .get(`${board}/share-resolve`)
+      .query({ q: "avatar-owner" })
+      .set("Authorization", bearer(otherId))
+      .expect(200)
+      .expect((response) =>
+        expect(response.body.users[0]?.avatar?.version).toBe(version),
+      );
+    for (const scope of [board, folder]) {
+      const sharingAvatar = `${scope}/share-avatars/${ownerId}/${version}`;
+      await agent
+        .get(sharingAvatar)
+        .set("Authorization", bearer(otherId))
+        .expect(200);
+      await agent
+        .get(sharingAvatar)
+        .set("Authorization", bearer(ownerId))
+        .expect(404);
+      await agent
+        .get(sharingAvatar)
+        .set("Authorization", bearer(otherId, ownerId))
+        .expect(404);
+    }
+
+    const grant = await prisma.collectionShare.create({
+      data: {
+        collectionId: collection.id,
+        granteeUserId: ownerId,
+        role: "view",
+        createdByUserId: otherId,
+      },
+    });
+    await agent
+      .get(boardAvatar)
+      .set("Authorization", bearer(otherId))
+      .expect(200);
+    await agent
+      .get(boardAvatar)
+      .set("Authorization", bearer(otherId))
+      .set("If-None-Match", etag)
+      .expect(304);
+    await request(app).get(boardAvatar).expect(401);
+
+    await prisma.collectionShare.delete({ where: { id: grant.id } });
+    await agent
+      .get(boardAvatar)
+      .set("Authorization", bearer(otherId))
+      .set("If-None-Match", etag)
+      .expect(404);
+  });
+
   it("limits repeated writes to one account without blocking a second account at the same IP", async () => {
     for (let attempt = 0; attempt < 30; attempt += 1) {
       await put(Buffer.alloc(1), otherId).expect(400);

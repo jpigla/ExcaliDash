@@ -4,6 +4,7 @@ import type { Locator, Page } from "@playwright/test";
 import {
   API_URL,
   createDrawing,
+  createCollection,
   deleteDrawing,
   getDrawing,
   listDrawings,
@@ -102,6 +103,76 @@ test.describe("Dashboard Workflows", () => {
     );
   });
 
+  test("creates nested collections and keeps descendants when the parent is deleted", async ({
+    page,
+    request,
+  }) => {
+    const suffix = Date.now();
+    const parent = await createCollection(request, `ARD ${suffix}`);
+    const childName = `Serverlog-Monitoring ${suffix}`;
+    const leafName = `Dashboards ${suffix}`;
+    const childPath = `${childName} / ${leafName}`;
+    createdCollectionIds.push(parent.id);
+    await page.goto("/");
+
+    await page
+      .getByRole("button", {
+        name: `New Subcollection: ${parent.name}`,
+        exact: true,
+      })
+      .click();
+    const input = page.getByRole("textbox", { name: "Collection name" });
+    await input.fill(childName);
+    await input.press("Enter");
+
+    const child = page.getByRole("button", { name: childName, exact: true });
+    await child.click({ button: "right" });
+    await page
+      .getByRole("button", { name: "New Subcollection", exact: true })
+      .click();
+    await input.fill(leafName);
+    await page
+      .getByRole("button", { name: "New Subcollection", exact: true })
+      .click();
+
+    const leaf = page.getByRole("button", { name: leafName, exact: true });
+    await leaf.click();
+    const originalPath = `${parent.name} / ${childPath}`;
+    await expect(
+      page.getByRole("heading", { name: originalPath }),
+    ).toBeVisible();
+    const collections = await listCollections(request);
+    createdCollectionIds.push(
+      ...collections
+        .filter(({ name }) => [childName, leafName].includes(name))
+        .map(({ id }) => id),
+    );
+
+    await page.reload();
+    await expect(
+      page.getByRole("heading", { name: originalPath }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: parent.name, exact: true })
+      .click({ button: "right" });
+    await page
+      .getByRole("button", { name: "Delete Collection", exact: true })
+      .click();
+    await expect(
+      page.getByText(/subcollections will move to the top level/),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Delete Collection", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: childPath, exact: true }),
+    ).toBeVisible();
+    await page.reload();
+    await expect(
+      page.getByRole("heading", { name: childPath, exact: true }),
+    ).toBeVisible();
+  });
+
   test("should create a collection via UI and move drawings using card controls", async ({
     page,
     request,
@@ -121,7 +192,7 @@ test.describe("Dashboard Workflows", () => {
     await collectionInput.press("Enter");
 
     await expect(
-      page.getByRole("button", { name: collectionName }),
+      page.getByRole("button", { name: collectionName, exact: true }),
     ).toBeVisible();
 
     const collections = await listCollections(request);
@@ -154,7 +225,7 @@ test.describe("Dashboard Workflows", () => {
 
     await page
       .getByRole("navigation")
-      .getByRole("button", { name: collectionName })
+      .getByRole("button", { name: collectionName, exact: true })
       .click();
     await expect(cardLocator).toBeVisible();
 

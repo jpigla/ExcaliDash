@@ -19,7 +19,12 @@ import {
   createTempDir,
   openWritableDb,
 } from "./importsCompatFixtures";
-import { getTestPrisma, setupTestDb, cleanupTestDb } from "./testUtils";
+import {
+  getTestPrisma,
+  setupTestDb,
+  cleanupTestDb,
+  createTestUser,
+} from "./testUtils";
 import { BOOTSTRAP_USER_ID } from "../auth/authMode";
 import { downloadBuffer } from "../s3";
 import { decodeSnapshotField } from "../snapshots/snapshotCodec";
@@ -741,6 +746,87 @@ describe("Import compatibility (legacy exports)", () => {
           err ? reject(err) : resolve(res.body as Buffer),
         );
     });
+
+  it("restores nested collections from a backup after reassigning conflicting IDs", async () => {
+    const parent = await prisma.collection.create({
+      data: { name: "ARD", userId: BOOTSTRAP_USER_ID },
+    });
+    const child = await prisma.collection.create({
+      data: {
+        name: "Serverlog-Monitoring",
+        parentId: parent.id,
+        userId: BOOTSTRAP_USER_ID,
+      },
+    });
+    const leaf = await prisma.collection.create({
+      data: {
+        name: "Dashboards",
+        parentId: child.id,
+        userId: BOOTSTRAP_USER_ID,
+      },
+    });
+    const buffer = await downloadExport();
+    await prisma.collection.deleteMany({});
+    const otherUser = await createTestUser(
+      prisma,
+      "hierarchy-conflicts@test.local",
+    );
+    await prisma.collection.createMany({
+      data: [parent, child].map(({ id }) => ({
+        id,
+        name: "Reserved",
+        userId: otherUser.id,
+      })),
+    });
+
+    const response = await agent
+      .post("/import/excalidash")
+      .set("User-Agent", userAgent)
+      .set(csrfHeaderName, csrfToken)
+      .attach("archive", buffer, "nested.excalidash");
+
+    expect(response.status).toBe(200);
+    const restored = await prisma.collection.findMany({
+      where: { userId: BOOTSTRAP_USER_ID },
+    });
+    const restoredParent = restored.find(({ name }) => name === parent.name)!;
+    const restoredChild = restored.find(({ name }) => name === child.name)!;
+    expect(restoredParent.id).not.toBe(parent.id);
+    expect(restoredChild.id).not.toBe(child.id);
+    expect(restoredParent.parentId).toBeNull();
+    expect(restoredChild.parentId).toBe(restoredParent.id);
+    expect(restored.find(({ id }) => id === leaf.id)?.parentId).toBe(
+      restoredChild.id,
+    );
+  });
+
+  it.each(["/import/excalidash/verify", "/import/excalidash"])(
+    "rejects cycles in collection backups at %s",
+    async (url) => {
+      const zip = new JSZip();
+      zip.file(
+        "excalidash.manifest.json",
+        JSON.stringify({
+          format: "excalidash",
+          formatVersion: 1,
+          exportedAt: new Date().toISOString(),
+          unorganizedFolder: "Unorganized",
+          collections: [
+            { id: "a", name: "A", folder: "A", parentId: "b" },
+            { id: "b", name: "B", folder: "B", parentId: "a" },
+          ],
+          drawings: [],
+        }),
+      );
+      const archive = await zip.generateAsync({ type: "nodebuffer" });
+      const response = await agent
+        .post(url)
+        .set("User-Agent", userAgent)
+        .set(csrfHeaderName, csrfToken)
+        .attach("archive", archive, "cyclic.excalidash");
+      expect(response.status).toBe(400);
+    },
+  );
 
   it("leaves excalidraw drawings byte-identical through export + re-import", async () => {
     const elements = [

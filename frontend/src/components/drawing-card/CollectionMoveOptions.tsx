@@ -1,3 +1,4 @@
+import { getCollectionPath } from "../../utils/collectionHierarchy";
 import React from "react";
 import { Check } from "lucide-react";
 import clsx from "clsx";
@@ -31,6 +32,9 @@ export const CollectionMoveOptions: React.FC<CollectionMoveOptionsProps> = ({
     onDone();
   };
 
+  const collectionsById = new Map(
+    collections.map((collection) => [collection.id, collection]),
+  );
   return (
     <>
       <button
@@ -57,7 +61,9 @@ export const CollectionMoveOptions: React.FC<CollectionMoveOptionsProps> = ({
               : unselectedClassName,
           )}
         >
-          <span className="truncate">{collection.name}</span>
+          <span className="min-w-0 break-words text-left">
+            {getCollectionPath(collection, collectionsById)}
+          </span>
           {currentCollectionId === collection.id && <Check size={checkSize} />}
         </button>
       ))}

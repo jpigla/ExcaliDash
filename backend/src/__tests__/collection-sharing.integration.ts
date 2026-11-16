@@ -128,6 +128,62 @@ describe("Collection Sharing - Backend Integration", () => {
     await prisma.$disconnect();
   });
 
+  it("restricts subcollection creation to their owner's tree", async () => {
+    const parent = await createCollection();
+    const createChild = (parentId: string, asOwner = true) =>
+      (asOwner ? ownerAgent : editorAgent)
+        .post("/collections")
+        .set("User-Agent", userAgent)
+        .set("Authorization", `Bearer ${asOwner ? ownerToken : editorToken}`)
+        .set(
+          asOwner ? ownerCsrfHeaderName : editorCsrfHeaderName,
+          asOwner ? ownerCsrfToken : editorCsrfToken,
+        )
+        .send({ name: "Subcollection", parentId });
+
+    const child = await createChild(parent.id);
+    expect(child.status).toBe(200);
+    expect(child.body.parentId).toBe(parent.id);
+    expect((await createChild(child.body.id)).status).toBe(200);
+    expect((await createChild("missing-parent")).status).toBe(404);
+    expect((await createChild(`trash:${owner.id}`)).status).toBe(400);
+    expect((await createChild("trash")).status).toBe(400);
+
+    const share = (collectionId: string) =>
+      ownerAgent
+        .post(`/collections/${collectionId}/shares`)
+        .set("User-Agent", userAgent)
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .set(ownerCsrfHeaderName, ownerCsrfToken)
+        .send({ identifier: editor.email, role: "edit" });
+    const listShared = () =>
+      editorAgent
+        .get("/collections")
+        .set("User-Agent", userAgent)
+        .set("Authorization", `Bearer ${editorToken}`);
+
+    expect((await share(parent.id)).status).toBe(200);
+    expect((await createChild(parent.id, false)).status).toBe(404);
+    expect((await listShared()).body).not.toContainEqual(
+      expect.objectContaining({ id: child.body.id }),
+    );
+
+    expect((await share(child.body.id)).status).toBe(200);
+    expect((await listShared()).body).toContainEqual(
+      expect.objectContaining({ id: child.body.id, parentId: parent.id }),
+    );
+
+    const removeParent = await ownerAgent
+      .delete(`/collections/${parent.id}/shares/${editor.id}`)
+      .set("User-Agent", userAgent)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .set(ownerCsrfHeaderName, ownerCsrfToken);
+    expect(removeParent.status).toBe(200);
+    expect((await listShared()).body).toContainEqual(
+      expect.objectContaining({ id: child.body.id, parentId: null }),
+    );
+  });
+
   it("adds a viewer share and returns collection metadata for the recipient", async () => {
     const collection = await createCollection();
 

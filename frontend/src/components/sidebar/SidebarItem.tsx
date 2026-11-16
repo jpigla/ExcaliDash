@@ -11,6 +11,7 @@ interface SidebarItemProps {
   onDoubleClick?: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   extraAction?: React.ReactNode;
+  siblingAction?: React.ReactNode;
   isEditing?: boolean;
   editValue?: string;
   onEditChange?: (val: string) => void;
@@ -28,6 +29,7 @@ export const SidebarItem: React.FC<SidebarItemProps> = ({
   onDoubleClick,
   onContextMenu,
   extraAction,
+  siblingAction,
   isEditing,
   editValue,
   onEditChange,
@@ -38,9 +40,9 @@ export const SidebarItem: React.FC<SidebarItemProps> = ({
   const [isDragOver, setIsDragOver] = useState(false);
 
   return (
-    <div className="relative group/item pl-3 pr-2">
+    <div className="relative group/item flex items-center gap-0.5 pl-3 pr-2">
       {isEditing ? (
-        <div className="py-1">
+        <div className="w-full py-1">
           <InlineEditInput
             value={editValue}
             onChange={(e) => onEditChange?.(e.target.value)}
@@ -74,7 +76,7 @@ export const SidebarItem: React.FC<SidebarItemProps> = ({
             onDrop?.(e, id);
           }}
           className={clsx(
-            "w-full flex items-center gap-3 px-3 py-2.5 text-sm font-semibold rounded-lg transition-all duration-200 border-2 group cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:focus-visible:ring-2 dark:focus-visible:ring-neutral-500",
+            "min-w-0 flex-1 flex items-center gap-3 px-3 py-2.5 text-sm font-semibold rounded-lg transition-all duration-200 border-2 group cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:focus-visible:ring-2 dark:focus-visible:ring-neutral-500",
             isActive || isDragOver
               ? "bg-indigo-50 dark:bg-neutral-800 text-indigo-900 dark:text-neutral-200 border-slate-800 dark:border-neutral-700 shadow-[1.5px_1.5px_0px_0px_rgba(30,41,59,0.9)] dark:shadow-[1.5px_1.5px_0px_0px_rgba(255,255,255,0.18)] -translate-y-0.5"
               : "text-slate-600 dark:text-neutral-400 border-transparent hover:bg-slate-50 dark:hover:bg-neutral-800 hover:border-slate-800 hover:shadow-[1.5px_1.5px_0px_0px_rgba(30,41,59,0.9)] dark:hover:shadow-[1.5px_1.5px_0px_0px_rgba(255,255,255,0.18)] hover:-translate-y-0.5",
@@ -90,7 +92,10 @@ export const SidebarItem: React.FC<SidebarItemProps> = ({
           >
             {icon}
           </span>
-          <span className="min-w-0 flex-1 truncate text-left font-semibold">
+          <span
+            title={label}
+            className="min-w-0 flex-1 truncate text-left font-semibold"
+          >
             {label}
           </span>
           {extraAction && (
@@ -100,6 +105,7 @@ export const SidebarItem: React.FC<SidebarItemProps> = ({
           )}
         </div>
       )}
+      {!isEditing && siblingAction}
     </div>
   );
 };

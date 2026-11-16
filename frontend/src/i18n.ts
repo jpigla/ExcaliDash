@@ -7,6 +7,10 @@ const messages = {
     "sidebar.collections": "Collections",
     "sidebar.newCollection": "New Collection",
     "sidebar.newCollectionPlaceholder": "New Collection...",
+    "sidebar.newSubcollection": "New Subcollection",
+    "sidebar.createCollectionError": "Could not create the collection.",
+    "sidebar.deleteCollectionWithChildren":
+      "Drawings directly in this collection will move to Unorganized. Its subcollections will move to the top level.",
     "sidebar.shared": "Shared",
     "sidebar.editor": "Editor",
     "sidebar.viewer": "Viewer",
@@ -29,6 +33,10 @@ const messages = {
     "sidebar.collections": "集合",
     "sidebar.newCollection": "新建集合",
     "sidebar.newCollectionPlaceholder": "新建集合…",
+    "sidebar.newSubcollection": "新建子集合",
+    "sidebar.createCollectionError": "无法创建集合。",
+    "sidebar.deleteCollectionWithChildren":
+      "此集合中的绘图将移至未整理，其子集合将移至顶层。",
     "sidebar.shared": "已共享",
     "sidebar.editor": "可编辑",
     "sidebar.viewer": "仅查看",

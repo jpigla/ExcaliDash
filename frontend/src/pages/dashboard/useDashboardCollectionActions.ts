@@ -15,14 +15,15 @@ export const useDashboardCollectionActions = ({
   setCollections,
   refreshData,
 }: UseDashboardCollectionActionsParams) => {
-  const handleCreateCollection = async (name: string) => {
-    try {
-      await api.createCollection(name);
-      setCollections(await api.getCollections());
-    } catch (err) {
-      console.error("Failed to create collection:", err);
-      refreshData();
-    }
+  const handleCreateCollection = async (
+    name: string,
+    parentId: string | null,
+  ) => {
+    const collection = await api.createCollection(name, parentId);
+    setCollections((current) => [
+      collection,
+      ...current.filter((item) => item.id !== collection.id),
+    ]);
   };
 
   const handleEditCollection = async (id: string, name: string) => {
@@ -40,12 +41,18 @@ export const useDashboardCollectionActions = ({
   };
 
   const handleDeleteCollection = async (id: string) => {
-    setCollections((current) =>
-      current.filter((collection) => collection.id !== id),
-    );
-    if (selectedCollectionId === id) setSelectedCollectionId(undefined);
     try {
       await api.deleteCollection(id);
+      setCollections((current) =>
+        current
+          .filter((collection) => collection.id !== id)
+          .map((collection) =>
+            collection.parentId === id
+              ? { ...collection, parentId: null }
+              : collection,
+          ),
+      );
+      if (selectedCollectionId === id) setSelectedCollectionId(undefined);
       refreshData();
     } catch (err) {
       console.error("Failed to delete collection:", err);

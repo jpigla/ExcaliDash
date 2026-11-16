@@ -1,3 +1,4 @@
+import { getCollectionPath } from "../utils/collectionHierarchy";
 import React, { useCallback, useEffect, useState, useRef } from "react";
 import { Layout } from "../components/Layout";
 import { Loader2 } from "lucide-react";
@@ -150,8 +151,11 @@ export const Dashboard: React.FC = () => {
     if (selectedCollectionId === null) return "Unorganized";
     if (selectedCollectionId === "shared") return "Shared with me";
     if (selectedCollectionId === "trash") return "Trash";
-    const collection = collections.find((c) => c.id === selectedCollectionId);
-    return collection ? collection.name : "Collection";
+    const byId = new Map(
+      collections.map((collection) => [collection.id, collection]),
+    );
+    const collection = byId.get(selectedCollectionId);
+    return collection ? getCollectionPath(collection, byId) : "Collection";
   }, [selectedCollectionId, collections]);
   const visibleCollections = React.useMemo(
     () => collections.filter((c) => c.id !== "trash"),

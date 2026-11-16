@@ -476,6 +476,18 @@ export const registerExcalidashImportRoutes = (
               if (collectionId === "trash") return trashCollectionId;
               return collectionIdMap.get(collectionId) || null;
             };
+            if (manifest.collections.some((c) => c.parentId !== undefined)) {
+              // All IDs have been mapped before restoring links, including conflicts.
+              for (const collection of manifest.collections) {
+                if (collection.id === "trash") continue;
+                await tx.collection.update({
+                  where: { id: collectionIdMap.get(collection.id)! },
+                  data: {
+                    parentId: resolveCollectionId(collection.parentId ?? null),
+                  },
+                });
+              }
+            }
             for (let i = 0; i < preparedDrawings.length; i++) {
               const prepared = preparedDrawings[i];
               const processedFiles = processedFilesMap.get(i) ?? {};

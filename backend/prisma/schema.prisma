@@ -93,12 +93,16 @@ model Collection {
   name      String
   userId    String
   user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parentId  String?
+  parent    Collection?       @relation("CollectionHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children  Collection[]      @relation("CollectionHierarchy")
   drawings  Drawing[]
   shares    CollectionShare[]
   createdAt DateTime          @default(now())
   updatedAt DateTime          @updatedAt
 
   @@index([userId, updatedAt])
+  @@index([parentId])
 }
 
 model Drawing {

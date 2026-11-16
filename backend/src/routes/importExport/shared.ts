@@ -17,34 +17,67 @@ export class ImportValidationError extends Error {
   }
 }
 
-export const excalidashManifestSchemaV1 = z.object({
-  format: z.literal("excalidash"),
-  formatVersion: z.literal(1),
-  exportedAt: z.string().min(1),
-  excalidashBackendVersion: z.string().optional(),
-  userId: z.string().optional(),
-  unorganizedFolder: z.string().min(1),
-  collections: z.array(
-    z.object({
-      id: z.string().min(1),
-      name: z.string(),
-      folder: z.string().min(1),
-      createdAt: z.string().optional(),
-      updatedAt: z.string().optional(),
-    }),
-  ),
-  drawings: z.array(
-    z.object({
-      id: z.string().min(1),
-      name: z.string(),
-      filePath: z.string().min(1),
-      collectionId: z.string().nullable(),
-      version: z.number().int().optional(),
-      createdAt: z.string().optional(),
-      updatedAt: z.string().optional(),
-    }),
-  ),
-});
+export const excalidashManifestSchemaV1 = z
+  .object({
+    format: z.literal("excalidash"),
+    formatVersion: z.literal(1),
+    exportedAt: z.string().min(1),
+    excalidashBackendVersion: z.string().optional(),
+    userId: z.string().optional(),
+    unorganizedFolder: z.string().min(1),
+    collections: z.array(
+      z.object({
+        id: z.string().min(1),
+        name: z.string(),
+        folder: z.string().min(1),
+        parentId: z.string().min(1).nullable().optional(),
+        createdAt: z.string().optional(),
+        updatedAt: z.string().optional(),
+      }),
+    ),
+    drawings: z.array(
+      z.object({
+        id: z.string().min(1),
+        name: z.string(),
+        filePath: z.string().min(1),
+        collectionId: z.string().nullable(),
+        version: z.number().int().optional(),
+        createdAt: z.string().optional(),
+        updatedAt: z.string().optional(),
+      }),
+    ),
+  })
+  .superRefine(({ collections }, ctx) => {
+    const isTrash = (id: string) => id === "trash" || id.startsWith("trash:");
+    const byId = new Map(
+      collections.map((collection) => [collection.id, collection]),
+    );
+    const checked = new Set<string>();
+
+    for (const collection of collections) {
+      const path = new Set<string>();
+      let current = collection;
+      while (current.parentId && !checked.has(current.id)) {
+        const parent = byId.get(current.parentId);
+        if (
+          !parent ||
+          isTrash(current.id) ||
+          isTrash(parent.id) ||
+          path.has(current.id)
+        ) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["collections"],
+            message: "Invalid collection hierarchy",
+          });
+          return;
+        }
+        path.add(current.id);
+        current = parent;
+      }
+      for (const id of path) checked.add(id);
+    }
+  });
 
 export type RegisterImportExportDeps = {
   app: express.Express;

@@ -31,6 +31,8 @@ extends board sharing, account profiles, and editor navigation.
   in the same browser. Boards without a saved view open fitted.
 - **Zoom down to 1%.** The editor's zoom buttons move in one-percentage-point
   steps between 10% and 1%.
+- **Board previews.** Thumbnail bounds exclude deleted elements, so the
+  preview fits the visible drawing.
 - **Editor toolbar.** With auto-hide enabled, the top bar stays visible while
   the pointer is over it. Move to the top edge to bring it back.
 - **Security fixes.** ZIP imports enforce size limits during decompression,

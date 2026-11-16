@@ -1,3 +1,21 @@
+import type { exportToSvg } from "@excalidraw/excalidraw";
+import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
+import { rehydrateFilesFromUrls } from "./rehydrateFiles";
+
+export const exportPreviewSvg = async (
+  options: Parameters<typeof exportToSvg>[0],
+) => {
+  const { exportToSvg } = await import("@excalidraw/excalidraw");
+  // Deleted elements still carry coordinates for collaboration and history.
+  // Excalidraw excludes them from the artwork but includes them in SVG bounds.
+  return exportToSvg({
+    ...options,
+    elements: options.elements.filter(
+      (element: ExcalidrawElement) => !element.isDeleted,
+    ),
+  });
+};
+
 export const isDefaultPreviewBackground = (color?: string | null): boolean =>
   !color || ["white", "#fff", "#ffffff"].includes(color.trim().toLowerCase());
 
@@ -204,4 +222,3 @@ export const normalizePreviewSvg = (
     return preview;
   }
 };
-import { rehydrateFilesFromUrls } from "./rehydrateFiles";

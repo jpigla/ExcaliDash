@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Drawing, DrawingSummary } from "../../types";
 import {
   normalizePreviewSvg,
+  exportPreviewSvg,
   isDefaultPreviewBackground,
   previewHasEmbeddedImages,
   rehydratePreviewSvg,
@@ -125,10 +126,9 @@ export const useDrawingPreview = (
             ),
           ),
         );
-        const { exportToSvg } = await import("@excalidraw/excalidraw");
         if (cancelled) return;
 
-        const svg = await exportToSvg({
+        const svg = await exportPreviewSvg({
           elements: normalizeImageElementsForPreview(data.elements, files),
           appState: {
             ...data.appState,

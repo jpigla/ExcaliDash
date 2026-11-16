@@ -1,4 +1,5 @@
 import express from "express";
+import { createHash } from "node:crypto";
 import { Prisma } from "../../generated/client";
 import {
   canViewDrawing,
@@ -223,7 +224,7 @@ export const registerDrawingListRoutes = (
     }),
   );
 
-  // Per-drawing preview: small, ETag-cacheable, revalidates against updatedAt.
+  // Per-drawing preview: revalidates when either the SVG or updatedAt changes.
   // Registered before `/drawings/:id` so previews aren't treated as an id.
   app.get(
     "/drawings/:id/preview",
@@ -261,7 +262,11 @@ export const registerDrawingListRoutes = (
       }
 
       const updatedAtMs = new Date(drawing.updatedAt).getTime();
-      const etag = `W/"preview-${id}-${updatedAtMs}"`;
+      const preview = drawing.preview ?? null;
+      const previewHash = createHash("sha256")
+        .update(preview ?? "")
+        .digest("hex");
+      const etag = `W/"preview-${id}-${updatedAtMs}-${previewHash}"`;
       res.setHeader("Cache-Control", "private, max-age=0, must-revalidate");
       res.setHeader("ETag", etag);
       if (req.headers["if-none-match"] === etag) {
@@ -269,7 +274,7 @@ export const registerDrawingListRoutes = (
       }
 
       return res.json({
-        preview: drawing.preview ?? null,
+        preview,
         updatedAt: updatedAtMs,
       });
     }),

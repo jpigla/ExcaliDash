@@ -43,6 +43,15 @@ for (const storedPreview of [false, true]) {
           locked: false,
           updated: Date.now(),
         },
+        {
+          id: "deleted-off-canvas-rectangle",
+          type: "rectangle",
+          x: -40000,
+          y: 28000,
+          width: 100,
+          height: 100,
+          isDeleted: true,
+        },
       ],
       files: {
         "preview-file": {
@@ -69,6 +78,10 @@ for (const storedPreview of [false, true]) {
       await page.goto("/");
       const card = page.locator(`#drawing-card-${drawing.id}`);
       await card.scrollIntoViewIfNeeded();
+      await expect(card.locator(".drawing-preview > svg")).toHaveAttribute(
+        "viewBox",
+        "0 0 120 120",
+      );
       await expect(card.locator("svg image")).toHaveAttribute(
         "href",
         /^data:image\/png;base64,/,

@@ -7,14 +7,16 @@ import {
   useState,
 } from "react";
 import type { MutableRefObject } from "react";
-import { exportToSvg } from "@excalidraw/excalidraw";
 import debounce from "lodash/debounce";
 import { toast } from "sonner";
 import * as api from "../../api";
 import { saveLibraryItems } from "./librarySync";
 import { reloadAndReconcile } from "./reconcileSave";
 import { compressExcalidrawFiles } from "../../utils/imageCompression";
-import { isDefaultPreviewBackground } from "../../utils/previewSvg";
+import {
+  exportPreviewSvg,
+  isDefaultPreviewBackground,
+} from "../../utils/previewSvg";
 import {
   applyUploadedFileRefs,
   getFilesDelta,
@@ -412,7 +414,7 @@ export const useEditorPersistence = ({
           fallbackElementCount: currentSnapshot.length,
         });
       }
-      const svg = await exportToSvg({
+      const svg = await exportPreviewSvg({
         elements: normalizedSnapshot,
         appState: {
           ...appState,

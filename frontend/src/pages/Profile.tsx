@@ -67,8 +67,11 @@ export const Profile: React.FC = () => {
     else navigate(`/collections?id=${id}`);
   };
 
-  const handleCreateCollection = async (name: string) => {
-    const collection = await api.createCollection(name);
+  const handleCreateCollection = async (
+    name: string,
+    parentId: string | null,
+  ) => {
+    const collection = await api.createCollection(name, parentId);
     setCollections((prev) => [...prev, collection]);
   };
 

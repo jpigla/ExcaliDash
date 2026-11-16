@@ -1,7 +1,17 @@
 import express from "express";
+import { z } from "zod";
+import { Prisma } from "../../generated/client";
 import { shareUserFields } from "./profileAvatars";
 import { DashboardRouteDeps } from "./types";
 import { getUserTrashCollectionId, isTrashCollectionId } from "./trash";
+
+const parentCollectionIdSchema = z
+  .string()
+  .min(1)
+  .refine((id) => id !== "trash" && !id.startsWith("trash:"))
+  .nullable();
+
+class ParentCollectionNotFound extends Error {}
 
 export const registerCollectionRoutes = (
   app: express.Express,
@@ -79,8 +89,15 @@ export const registerCollectionRoutes = (
           },
         },
       });
+      const visibleSharedIds = new Set(
+        sharedEntries.map((s) => s.collectionId),
+      );
       const sharedCollections = sharedEntries.map((s) => ({
         ...s.collection,
+        parentId:
+          s.collection.parentId && visibleSharedIds.has(s.collection.parentId)
+            ? s.collection.parentId
+            : null,
         sharedRole: s.role,
         isOwner: false,
       }));
@@ -104,11 +121,42 @@ export const registerCollectionRoutes = (
         });
       }
 
-      const sanitizedName = sanitizeText(parsed.data, 100);
-      const newCollection = await prisma.collection.create({
-        data: { name: sanitizedName, userId: req.user.id },
-      });
-      return res.json({ ...newCollection, sharedRole: null, isOwner: true });
+      const parent = parentCollectionIdSchema.safeParse(
+        req.body.parentId ?? null,
+      );
+      if (!parent.success) {
+        return res.status(400).json({ error: "Invalid parent collection" });
+      }
+
+      const userId = req.user.id;
+      const parentId = parent.data;
+      const data = { name: sanitizeText(parsed.data, 100), userId, parentId };
+      try {
+        const newCollection =
+          parentId === null
+            ? await prisma.collection.create({ data })
+            : await prisma.$transaction(async (tx) => {
+                // The insert locks the referenced key until ownership is checked.
+                const collection = await tx.collection.create({ data });
+                const ownedParent = await tx.collection.findFirst({
+                  where: { id: parentId, userId },
+                  select: { id: true },
+                });
+                if (!ownedParent) throw new ParentCollectionNotFound();
+                return collection;
+              });
+        return res.json({ ...newCollection, sharedRole: null, isOwner: true });
+      } catch (error) {
+        if (
+          error instanceof ParentCollectionNotFound ||
+          (parentId !== null &&
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === "P2003")
+        ) {
+          return res.status(404).json({ error: "Parent collection not found" });
+        }
+        throw error;
+      }
     }),
   );
 

@@ -13,8 +13,14 @@ export const getCollections = async () => {
   return response.data;
 };
 
-export const createCollection = async (name: string) => {
-  const response = await api.post<Collection>("/collections", { name });
+export const createCollection = async (
+  name: string,
+  parentId?: string | null,
+) => {
+  const response = await api.post<Collection>("/collections", {
+    name,
+    parentId,
+  });
   return response.data;
 };
 

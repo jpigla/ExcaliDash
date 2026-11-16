@@ -120,6 +120,7 @@ export const registerExcalidashExportRoute = (
           folder:
             folderByCollectionId.get(collection.id) ||
             sanitizePathSegment(collection.name, "Collection"),
+          parentId: collection.parentId,
           createdAt: collection.createdAt.toISOString(),
           updatedAt: collection.updatedAt.toISOString(),
         }))

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   LayoutGrid,
   Folder,
@@ -21,12 +21,13 @@ import {
   type SidebarContextMenuState,
 } from "./sidebar/SidebarContextMenu";
 import { useLocale } from "../context/useLocale";
+import { getCollectionRows } from "../utils/collectionHierarchy";
 
 interface SidebarProps {
   collections: Collection[];
   selectedCollectionId: string | null | undefined;
   onSelectCollection: (id: string | null | undefined) => void;
-  onCreateCollection: (name: string) => void;
+  onCreateCollection: (name: string, parentId: string | null) => Promise<void>;
   onEditCollection: (id: string, name: string) => void;
   onDeleteCollection: (id: string) => void;
   onDrop?: (e: React.DragEvent, collectionId: string | null) => void;
@@ -43,7 +44,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const { logout, user, authEnabled } = useAuth();
   const { t } = useLocale();
-  const [isCreating, setIsCreating] = useState(false);
+  const [creationParentId, setCreationParentId] = useState<string | null>();
+  const [isSavingCollection, setIsSavingCollection] = useState(false);
+  const [createFailed, setCreateFailed] = useState(false);
+  const collectionRows = useMemo(
+    () => getCollectionRows(collections.filter(({ id }) => id !== "trash")),
+    [collections],
+  );
   const [newCollectionName, setNewCollectionName] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
@@ -60,14 +67,80 @@ export const Sidebar: React.FC<SidebarProps> = ({
     document.addEventListener("click", handleClickOutside);
     return () => document.removeEventListener("click", handleClickOutside);
   }, []);
-  const handleCreateSubmit = (e: React.FormEvent) => {
+  const startCreating = (parentId: string | null) => {
+    if (isSavingCollection) return;
+    setNewCollectionName("");
+    setCreateFailed(false);
+    setCreationParentId(parentId);
+  };
+  const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newCollectionName.trim()) {
-      onCreateCollection(newCollectionName);
-      setNewCollectionName("");
-      setIsCreating(false);
+    const name = newCollectionName.trim();
+    if (!name || creationParentId === undefined || isSavingCollection) return;
+    setIsSavingCollection(true);
+    setCreateFailed(false);
+    try {
+      await onCreateCollection(name, creationParentId);
+      setCreationParentId(undefined);
+    } catch {
+      setCreateFailed(true);
+    } finally {
+      setIsSavingCollection(false);
     }
   };
+  const createForm = (
+    <form onSubmit={handleCreateSubmit} className="mb-2 pl-3 pr-2">
+      <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-1 dark:bg-neutral-800">
+        <Folder
+          size={18}
+          className="shrink-0 text-slate-400 dark:text-neutral-500"
+        />
+        <input
+          autoFocus
+          type="text"
+          maxLength={100}
+          readOnly={isSavingCollection}
+          value={newCollectionName}
+          onChange={(e) => setNewCollectionName(e.target.value)}
+          placeholder={t(
+            creationParentId
+              ? "sidebar.newSubcollection"
+              : "sidebar.newCollectionPlaceholder",
+          )}
+          aria-label="Collection name"
+          className="ui-input min-w-0 w-full py-1.5 font-medium"
+          onBlur={() => {
+            if (!newCollectionName && !isSavingCollection)
+              setCreationParentId(undefined);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && !isSavingCollection)
+              setCreationParentId(undefined);
+          }}
+        />
+        <button
+          type="submit"
+          disabled={!newCollectionName.trim() || isSavingCollection}
+          aria-label={t(
+            creationParentId
+              ? "sidebar.newSubcollection"
+              : "sidebar.newCollection",
+          )}
+          className="ui-icon-button h-7 w-7 shrink-0"
+        >
+          <Plus size={14} />
+        </button>
+      </div>
+      {createFailed && (
+        <p
+          role="alert"
+          className="px-3 py-1 text-sm text-red-600 dark:text-red-400"
+        >
+          {t("sidebar.createCollectionError")}
+        </p>
+      )}
+    </form>
+  );
   const handleEditCommit = () => {
     const id = editingId;
     const trimmed = editName.trim();
@@ -151,105 +224,105 @@ export const Sidebar: React.FC<SidebarProps> = ({
             />
           </div>
           <div className="space-y-1">
-            <div className="flex items-center justify-between px-6 pb-2 group/header">
+            <div className="flex items-center justify-between px-6 pb-2">
               <span className="text-xs font-semibold text-slate-400 dark:text-neutral-500">
                 {t("sidebar.collections")}
               </span>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  setIsCreating(true);
+                  startCreating(null);
                 }}
-                className="ui-icon-button h-7 w-7 border-transparent bg-transparent shadow-none opacity-0 group-hover/header:opacity-100 dark:bg-transparent"
+                className="ui-icon-button h-7 w-7 border-transparent bg-transparent shadow-none dark:bg-transparent"
                 title={t("sidebar.newCollection")}
               >
                 <Plus size={14} strokeWidth={2.5} />
               </button>
             </div>
-            {isCreating && (
-              <form
-                onSubmit={handleCreateSubmit}
-                className="mb-2 pl-3 pr-2"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-1 dark:bg-neutral-800">
-                  <Folder
-                    size={18}
-                    className="shrink-0 text-slate-400 dark:text-neutral-500"
-                  />
-                  <input
-                    autoFocus
-                    type="text"
-                    value={newCollectionName}
-                    onChange={(e) => setNewCollectionName(e.target.value)}
-                    placeholder={t("sidebar.newCollectionPlaceholder")}
-                    aria-label="Collection name"
-                    className="ui-input min-w-0 w-full py-1.5 font-medium"
-                    onBlur={() => !newCollectionName && setIsCreating(false)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Escape") {
-                        setNewCollectionName("");
-                        setIsCreating(false);
-                      }
-                    }}
+            {creationParentId === null && createForm}
+            {collectionRows.map(({ collection, depth }) => (
+              <React.Fragment key={collection.id}>
+                <div style={{ paddingInlineStart: Math.min(depth, 5) * 10 }}>
+                  <SidebarItem
+                    id={collection.id}
+                    icon={
+                      selectedCollectionId === collection.id ? (
+                        <FolderOpen size={18} />
+                      ) : (
+                        <Folder size={18} />
+                      )
+                    }
+                    label={collection.name}
+                    isActive={selectedCollectionId === collection.id}
+                    onClick={() => onSelectCollection(collection.id)}
+                    onDoubleClick={
+                      collection.isOwner === false
+                        ? undefined
+                        : () => {
+                            setEditingId(collection.id);
+                            setEditName(collection.name);
+                          }
+                    }
+                    onContextMenu={(e) =>
+                      handleItemContextMenu(e, collection.id)
+                    }
+                    isEditing={editingId === collection.id}
+                    editValue={editName}
+                    onEditChange={setEditName}
+                    onEditCommit={handleEditCommit}
+                    onEditCancel={() => setEditingId(null)}
+                    onDrop={onDrop}
+                    siblingAction={
+                      collection.isOwner !== false && (
+                        <button
+                          type="button"
+                          title={t("sidebar.newSubcollection")}
+                          aria-label={`${t("sidebar.newSubcollection")}: ${collection.name}`}
+                          disabled={isSavingCollection}
+                          onClick={() => startCreating(collection.id)}
+                          className="ui-icon-button h-7 w-7 shrink-0 border-transparent bg-transparent shadow-none dark:bg-transparent"
+                        >
+                          <Plus size={14} />
+                        </button>
+                      )
+                    }
+                    extraAction={
+                      <div className="flex items-center gap-1">
+                        {/* Shared indicator — only for owned collections that have been shared */}
+                        {collection.isOwner !== false &&
+                          collection.isShared && (
+                            <span className="rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400">
+                              {t("sidebar.shared")}
+                            </span>
+                          )}
+                        {/* Only show roles for collections shared with this user. */}
+                        {collection.isOwner === false && (
+                          <span
+                            className={clsx(
+                              "shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold",
+                              collection.sharedRole === "edit"
+                                ? "bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800"
+                                : "bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800",
+                            )}
+                          >
+                            {collection.sharedRole === "edit"
+                              ? t("sidebar.editor")
+                              : t("sidebar.viewer")}
+                          </span>
+                        )}
+                      </div>
+                    }
                   />
                 </div>
-              </form>
-            )}
-            {collections
-              .filter((c) => c.name !== "Trash")
-              .map((collection) => (
-                <SidebarItem
-                  key={collection.id}
-                  id={collection.id}
-                  icon={
-                    selectedCollectionId === collection.id ? (
-                      <FolderOpen size={18} />
-                    ) : (
-                      <Folder size={18} />
-                    )
-                  }
-                  label={collection.name}
-                  isActive={selectedCollectionId === collection.id}
-                  onClick={() => onSelectCollection(collection.id)}
-                  onDoubleClick={() => {
-                    setEditingId(collection.id);
-                    setEditName(collection.name);
-                  }}
-                  onContextMenu={(e) => handleItemContextMenu(e, collection.id)}
-                  isEditing={editingId === collection.id}
-                  editValue={editName}
-                  onEditChange={setEditName}
-                  onEditCommit={handleEditCommit}
-                  onEditCancel={() => setEditingId(null)}
-                  onDrop={onDrop}
-                  extraAction={
-                    <div className="flex items-center gap-1">
-                      {/* Shared indicator — only for owned collections that have been shared */}
-                      {collection.isOwner !== false && collection.isShared && (
-                        <span className="rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400">
-                          {t("sidebar.shared")}
-                        </span>
-                      )}
-                      {/* Only show roles for collections shared with this user. */}
-                      {collection.isOwner === false && (
-                        <span
-                          className={clsx(
-                            "shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold",
-                            collection.sharedRole === "edit"
-                              ? "bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800"
-                              : "bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800",
-                          )}
-                        >
-                          {collection.sharedRole === "edit"
-                            ? t("sidebar.editor")
-                            : t("sidebar.viewer")}
-                        </span>
-                      )}
-                    </div>
-                  }
-                />
-              ))}
+                {creationParentId === collection.id && (
+                  <div
+                    style={{ paddingInlineStart: Math.min(depth + 1, 5) * 10 }}
+                  >
+                    {createForm}
+                  </div>
+                )}
+              </React.Fragment>
+            ))}
           </div>
         </nav>
         <SidebarFooter
@@ -265,7 +338,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           contextMenu={contextMenu}
           collections={collections}
           onClose={() => setContextMenu(null)}
-          onCreateCollection={() => setIsCreating(true)}
+          onCreateCollection={startCreating}
           onRenameCollection={(collection) => {
             setEditingId(collection.id);
             setEditName(collection.name);
@@ -277,7 +350,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <ConfirmModal
         isOpen={!!collectionToDelete}
         title={t("sidebar.deleteCollection")}
-        message={t("sidebar.deleteCollectionMessage")}
+        message={t(
+          collectionToDelete &&
+            collections.some(
+              (collection) => collection.parentId === collectionToDelete,
+            )
+            ? "sidebar.deleteCollectionWithChildren"
+            : "sidebar.deleteCollectionMessage",
+        )}
         confirmText={t("sidebar.deleteCollection")}
         onConfirm={() => {
           if (collectionToDelete) {

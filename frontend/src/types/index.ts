@@ -18,6 +18,7 @@ export interface Drawing extends DrawingSummary {
 export interface Collection {
   id: string;
   name: string;
+  parentId?: string | null;
   createdAt: number;
   sharedRole?: "view" | "edit" | null;
   isOwner?: boolean;

@@ -1,3 +1,4 @@
+import { getCollectionPath } from "../../utils/collectionHierarchy";
 import React from "react";
 import {
   ArrowDown,
@@ -86,6 +87,9 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
     !isSharedView &&
     (!isSharedCollection || currentCollection?.sharedRole === "edit");
 
+  const collectionsById = new Map(
+    collections.map((collection) => [collection.id, collection]),
+  );
   return (
     <div className="mb-8 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
       <div className="flex flex-1 w-full lg:w-auto gap-3 items-center flex-wrap">
@@ -229,7 +233,9 @@ export const DashboardToolbar: React.FC<DashboardToolbarProps> = ({
                         className="ui-menu-item"
                       >
                         <Folder size={14} />
-                        <span className="truncate">{collection.name}</span>
+                        <span className="min-w-0 break-words text-left">
+                          {getCollectionPath(collection, collectionsById)}
+                        </span>
                       </button>
                     ))}
                 </div>

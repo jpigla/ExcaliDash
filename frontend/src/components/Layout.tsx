@@ -15,7 +15,7 @@ interface LayoutProps {
   collections: Collection[];
   selectedCollectionId: string | null | undefined;
   onSelectCollection: (id: string | null | undefined) => void;
-  onCreateCollection: (name: string) => void;
+  onCreateCollection: (name: string, parentId: string | null) => Promise<void>;
   onEditCollection: (id: string, name: string) => void;
   onDeleteCollection: (id: string) => void;
   onDrop?: (e: React.DragEvent, collectionId: string | null) => void;

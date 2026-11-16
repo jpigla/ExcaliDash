@@ -11,7 +11,7 @@ or read the documentation at [excalidash.xyz](https://excalidash.xyz).
 ## What's different in this fork
 
 This fork builds on [ExcaliDash](https://github.com/ZimengXiong/ExcaliDash) and
-extends its board sharing controls.
+extends board sharing and adds account profile pictures.
 
 - **Guest links without accounts.** Create several links for the same board.
   Each link can allow live viewing or editing and can be open or password protected.
@@ -21,6 +21,10 @@ extends its board sharing controls.
 - **Guest access protections.** Changes to a link's access settings end its
   guest sessions. Guests can load images on the current board, while
   history-only images stay private. Guest uploads are limited.
+- **Profile pictures.** Signed-in users, including admins, can upload, replace,
+  or remove a picture under **Profile**. Pictures appear in the sidebar, on
+  boards for signed-in collaborators, and in board and collection sharing
+  dialogs. Guest sessions show initials.
 - **Editor toolbar.** With auto-hide enabled, the top bar stays visible while
   the pointer is over it. Move to the top edge to bring it back.
 - **Security fixes.** ZIP imports enforce size limits during decompression,

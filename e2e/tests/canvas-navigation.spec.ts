@@ -52,3 +52,101 @@ test("native two-finger gestures pan while modified wheel zooms", async ({
     await deleteDrawing(request, drawing.id);
   }
 });
+
+test("boards open fitted or restore the last viewport and zoom down to 1%", async ({
+  page,
+  request,
+}) => {
+  const drawing = await createDrawing(request, {
+    name: `Viewport ${Date.now()}`,
+    elements: [
+      {
+        id: "a",
+        type: "rectangle",
+        x: 4000,
+        y: -12000,
+        width: 100,
+        height: 100,
+      },
+      {
+        id: "b",
+        type: "rectangle",
+        x: 22000,
+        y: -3000,
+        width: 100,
+        height: 100,
+      },
+    ],
+  });
+  try {
+    const openingView = page.getByRole("combobox", {
+      name: "Board opening view",
+    });
+    const zoomLabel = page.locator(".reset-zoom-button");
+    const viewport = () =>
+      page.evaluate(() => {
+        const state = (
+          window as any
+        ).__EXCALIDASH_EXCALIDRAW_API__?.getAppState();
+        if (!state || state.isLoading) return null;
+        const zoom = state.zoom.value;
+        return {
+          zoom,
+          x: state.width / (2 * zoom) - state.scrollX,
+          y: state.height / (2 * zoom) - state.scrollY,
+          visibleWidth: state.width / zoom,
+          visibleHeight: state.height / zoom,
+        };
+      });
+
+    await page.goto("/settings");
+    await expect(openingView).toHaveValue("fit");
+    await page.goto(`/editor/${drawing.id}`);
+    await expect
+      .poll(async () => {
+        const view = await viewport();
+        return (
+          view && {
+            x: Math.round(view.x),
+            y: Math.round(view.y),
+            fits: view.visibleWidth >= 18100 && view.visibleHeight >= 9100,
+          }
+        );
+      })
+      .toEqual({ x: 13050, y: -7450, fits: true });
+    await expect(zoomLabel).toHaveText(/^[1-9]%$/);
+
+    await page.goto("/settings");
+    await openingView.selectOption("last");
+    await page.goto(`/editor/${drawing.id}`);
+    await expect(zoomLabel).toBeVisible();
+    await page.evaluate(() => {
+      (window as any).__EXCALIDASH_EXCALIDRAW_API__.updateScene({
+        appState: { zoom: { value: 0.1 } },
+      });
+    });
+    await expect(zoomLabel).toHaveText("10%");
+    const zoomOut = page.locator(".zoom-out-button");
+    for (let percent = 9; percent >= 1; percent--) {
+      await zoomOut.click();
+      await expect(zoomLabel).toHaveText(`${percent}%`);
+    }
+    await expect(zoomOut).toBeDisabled();
+    const zoomIn = page.locator(".zoom-in-button");
+    for (let percent = 2; percent <= 10; percent++) {
+      await zoomIn.click();
+      await expect(zoomLabel).toHaveText(`${percent}%`);
+    }
+
+    const canvas = page.locator("canvas.excalidraw__canvas.interactive");
+    await canvas.hover();
+    const beforePan = await viewport();
+    await page.mouse.wheel(120, 100);
+    await expect.poll(async () => (await viewport())?.x).not.toBe(beforePan?.x);
+    const lastView = await viewport();
+    await page.reload();
+    await expect.poll(viewport).toEqual(lastView);
+  } finally {
+    await deleteDrawing(request, drawing.id);
+  }
+});

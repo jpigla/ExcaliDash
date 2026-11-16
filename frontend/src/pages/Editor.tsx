@@ -5,7 +5,7 @@ import { getInitialLangCode } from "../components/LanguageSelector";
 import type { UserIdentity } from "../utils/identity";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
-import { usePreference } from "../context/PreferencesContext";
+import { usePreference, usePreferences } from "../context/PreferencesContext";
 import { useEditorChrome } from "./editor/useEditorChrome";
 import { useEditorAutoHide } from "./editor/useEditorAutoHide";
 import { useEditorIdentity } from "./editor/useEditorIdentity";
@@ -23,6 +23,7 @@ import { useEditorBroadcast } from "./editor/useEditorBroadcast";
 import { useEditorFileUploads } from "./editor/useEditorFileUploads";
 import { useEditorSceneApi } from "./editor/useEditorSceneApi";
 import { useEditorGridStep } from "./editor/useEditorGridStep";
+import { useEditorViewport } from "./editor/useEditorViewport";
 import { useKeyboardLayoutFix } from "./editor/useKeyboardLayoutFix";
 import { GuestLinkGate } from "./editor/GuestLinkGate";
 import { DEFAULT_GRID_STEP } from "../components/GridStepSelector";
@@ -77,6 +78,8 @@ const ExcalidrawEditor: React.FC<{
   const { theme, toggleTheme } = useTheme();
   const { user: signedInUser } = useAuth();
   const user = guestShareId ? null : signedInUser;
+  const { ready: preferencesReady } = usePreferences();
+  const [editorStartView] = usePreference("editorStartView", "fit");
   const [accessLevel, setAccessLevel] = useState<
     "none" | "view" | "edit" | "owner"
   >("none");
@@ -359,6 +362,12 @@ const ExcalidrawEditor: React.FC<{
       resolveSafeSnapshot,
       broadcastChanges,
     });
+  const handleViewportChange = useEditorViewport(
+    excalidrawAPI,
+    guestShareId ? undefined : id,
+    user?.id ?? "anonymous",
+    guestShareId ? "fit" : editorStartView,
+  );
   const commandRefs = React.useMemo(
     () => ({
       currentDrawingVersion: currentDrawingVersionRef,
@@ -412,7 +421,7 @@ const ExcalidrawEditor: React.FC<{
         canEdit={canEdit}
         drawingName={drawingName}
         editorContainerRef={editorContainerRef}
-        initialData={initialData}
+        initialData={guestShareId || preferencesReady ? initialData : null}
         isHeaderVisible={isHeaderVisible}
         isHistoryOpen={isHistoryOpen}
         historyPreview={isHistoryOpen ? historyPreview : null}
@@ -431,7 +440,10 @@ const ExcalidrawEditor: React.FC<{
         onToggleFollow={toggleFollow}
         theme={theme}
         onBackClick={handleBackClick}
-        onCanvasChange={handleCanvasChange}
+        onCanvasChange={(elements, appState, files) => {
+          handleViewportChange(appState);
+          handleCanvasChange(elements, appState, files);
+        }}
         onCanvasDropCapture={handleCanvasDropCapture}
         onExportClick={handleExportClick}
         onLibraryChange={handleLibraryChange}

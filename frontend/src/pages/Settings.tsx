@@ -295,8 +295,11 @@ export const Settings: React.FC = () => {
       setLegacyDbImportLoading(false);
     }
   };
-  const handleCreateCollection = async (name: string) => {
-    await api.createCollection(name);
+  const handleCreateCollection = async (
+    name: string,
+    parentId: string | null,
+  ) => {
+    await api.createCollection(name, parentId);
     const newCollections = await api.getCollections();
     setCollections(newCollections);
   };

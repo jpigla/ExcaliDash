@@ -48,7 +48,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isSavingCollection, setIsSavingCollection] = useState(false);
   const [createFailed, setCreateFailed] = useState(false);
   const collectionRows = useMemo(
-    () => getCollectionRows(collections),
+    () => getCollectionRows(collections.filter(({ id }) => id !== "trash")),
     [collections],
   );
   const [newCollectionName, setNewCollectionName] = useState("");

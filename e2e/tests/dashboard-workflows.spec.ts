@@ -126,6 +126,8 @@ test.describe("Dashboard Workflows", () => {
     await input.press("Enter");
 
     const child = page.getByRole("button", { name: childName, exact: true });
+    await expect(child).toBeVisible();
+    await page.goto("/settings");
     await child.click({ button: "right" });
     await page
       .getByRole("button", { name: "New Subcollection", exact: true })

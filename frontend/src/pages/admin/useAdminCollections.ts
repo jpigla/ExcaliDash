@@ -24,11 +24,14 @@ export const useAdminCollections = (navigate: NavigateFunction) => {
     [navigate],
   );
 
-  const handleCreateCollection = useCallback(async (name: string) => {
-    await api.createCollection(name);
-    const newCollections = await api.getCollections();
-    setCollections(newCollections);
-  }, []);
+  const handleCreateCollection = useCallback(
+    async (name: string, parentId: string | null) => {
+      await api.createCollection(name, parentId);
+      const newCollections = await api.getCollections();
+      setCollections(newCollections);
+    },
+    [],
+  );
 
   const handleEditCollection = useCallback(async (id: string, name: string) => {
     setCollections((prev) =>

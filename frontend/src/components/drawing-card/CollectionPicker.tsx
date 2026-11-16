@@ -33,28 +33,30 @@ export const CollectionPicker: React.FC<CollectionPickerProps> = ({
     ? collections.find((collection) => collection.id === drawing.collectionId)
         ?.name || "Collection"
     : "Unorganized";
+  const label = isShared ? "Shared" : collectionName;
 
   return (
-    <div onClick={(e) => e.stopPropagation()}>
+    <div className="min-w-0 max-w-full" onClick={(e) => e.stopPropagation()}>
       <div className="flex items-center gap-1 flex-wrap justify-start xs:justify-end">
-        <div className="relative">
+        <div className="relative min-w-0 max-w-full">
           <button
             onClick={() => {
               if (isShared || isSharedCollection) return;
               onToggle();
             }}
             data-testid={`collection-picker-${drawing.id}`}
+            title={label}
             aria-haspopup="listbox"
             aria-expanded={isOpen}
             disabled={isShared || isSharedCollection}
             className={clsx(
-              "max-w-[120px] truncate rounded-md border px-2 py-0.5 text-[10px] font-semibold transition-all",
+              "block max-w-full truncate rounded-md border px-2 py-0.5 text-[10px] font-semibold transition-all",
               isShared || isSharedCollection
                 ? "bg-slate-50 dark:bg-neutral-800/40 text-slate-400 dark:text-neutral-500 border-neutral-100 dark:border-neutral-800 cursor-not-allowed"
                 : "bg-slate-50 dark:bg-neutral-800 text-slate-500 dark:text-neutral-400 cursor-pointer border-neutral-200/60 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600 hover:bg-neutral-100 dark:hover:bg-neutral-700/50",
             )}
           >
-            {isShared ? "Shared" : collectionName}
+            {label}
           </button>
 
           {!isShared && isOpen && (

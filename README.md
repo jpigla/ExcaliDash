@@ -11,7 +11,7 @@ or read the documentation at [excalidash.xyz](https://excalidash.xyz).
 ## What's different in this fork
 
 This fork builds on [ExcaliDash](https://github.com/ZimengXiong/ExcaliDash) and
-extends board sharing and adds account profile pictures.
+extends board sharing, account profiles, and editor navigation.
 
 - **Guest links without accounts.** Create several links for the same board.
   Each link can allow live viewing or editing and can be open or password protected.
@@ -25,6 +25,12 @@ extends board sharing and adds account profile pictures.
   or remove a picture under **Profile**. Pictures appear in the sidebar, on
   boards for signed-in collaborators, and in board and collection sharing
   dialogs. Guest sessions show initials.
+- **Board opening view.** The editor centers the whole drawing and fits it
+  to the window by default. Under **Settings → Board opening view**, choose
+  **Restore last view** to reopen each board at its last zoom and position
+  in the same browser. Boards without a saved view open fitted.
+- **Zoom down to 1%.** The editor's zoom buttons move in one-percentage-point
+  steps between 10% and 1%.
 - **Editor toolbar.** With auto-hide enabled, the top bar stays visible while
   the pointer is over it. Move to the top edge to bring it back.
 - **Security fixes.** ZIP imports enforce size limits during decompression,

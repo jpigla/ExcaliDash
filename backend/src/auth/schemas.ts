@@ -151,6 +151,7 @@ export const userPreferencesSchema = z
     language: z.string().trim().min(1).max(35).optional(),
     gridStep: z.number().int().min(1).max(100).optional(),
     editorAutoHide: z.boolean().optional(),
+    editorStartView: z.enum(["fit", "last"]).optional(),
     compactSidebar: z.boolean().optional(),
   })
   .strict();

@@ -200,7 +200,6 @@ export const useEditorSceneLoader = ({
           elements,
           appState: hydratedAppState,
           files: canvasFiles,
-          scrollToContent: true,
           libraryItems,
         });
 

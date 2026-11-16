@@ -1,5 +1,6 @@
 import {
   Archive,
+  Frame,
   PanelLeft,
   Eye,
   EyeOff,
@@ -20,6 +21,7 @@ import {
   settingsPrimaryButtonClass,
 } from "./SettingsRow";
 import { useLocale } from "../../context/useLocale";
+import { usePreference, usePreferences } from "../../context/PreferencesContext";
 import {
   MIN_IMAGE_COMPRESSION_THRESHOLD_MB,
   MAX_IMAGE_COMPRESSION_THRESHOLD_MB,
@@ -68,6 +70,11 @@ export const SettingsMainGrid = ({
   onCheckForUpdates,
 }: SettingsMainGridProps) => {
   const { language, setLanguage, t } = useLocale();
+  const { ready: preferencesReady } = usePreferences();
+  const [editorStartView, setEditorStartView] = usePreference(
+    "editorStartView",
+    "fit",
+  );
 
   return (
     <SettingsCard>
@@ -114,6 +121,26 @@ export const SettingsMainGrid = ({
             { value: "system", label: "System", icon: <Monitor size={14} /> },
           ]}
         />
+      </SettingsRow>
+
+      <SettingsRow
+        icon={<Frame size={20} />}
+        tileClassName="border-black bg-cyan-400 text-black dark:border-neutral-700"
+        title="Board opening view"
+        description="Applies to all boards. The last view is remembered in this browser."
+      >
+        <select
+          aria-label="Board opening view"
+          value={editorStartView}
+          disabled={!preferencesReady}
+          onChange={(event) =>
+            setEditorStartView(event.target.value === "last" ? "last" : "fit")
+          }
+          className="ui-input text-sm font-bold"
+        >
+          <option value="fit">Fit drawing to window</option>
+          <option value="last">Restore last view</option>
+        </select>
       </SettingsRow>
 
       <SettingsRow

@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import fs from "fs";
 import path from "path";
+import { excalidrawZoom, excalidrawZoomForOptimizer } from "./excalidrawZoom";
 
 const versionFilePath = path.resolve(__dirname, "../VERSION");
 const appVersion = fs.readFileSync(versionFilePath, "utf8").trim();
@@ -25,7 +26,7 @@ export default defineConfig(({ command }) => {
   };
 
   return {
-    plugins: [react()],
+    plugins: [react(), excalidrawZoom],
     define: {
       ...processEnvDefines,
       "import.meta.env.VITE_APP_VERSION": JSON.stringify(appVersion),
@@ -35,6 +36,7 @@ export default defineConfig(({ command }) => {
       esbuildOptions: {
         define: processEnvDefines,
         target: "es2022",
+        plugins: [excalidrawZoomForOptimizer],
       },
     },
     build: {

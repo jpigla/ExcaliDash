@@ -58,6 +58,7 @@ export interface AuthUser {
 }
 
 export type ThemePreference = "light" | "dark" | "system";
+export type EditorStartView = "fit" | "last";
 
 export interface UserPreferences {
   theme?: ThemePreference;
@@ -66,6 +67,7 @@ export interface UserPreferences {
   language?: string;
   gridStep?: number;
   editorAutoHide?: boolean;
+  editorStartView?: EditorStartView;
   compactSidebar?: boolean;
 }
 

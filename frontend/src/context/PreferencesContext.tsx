@@ -24,6 +24,7 @@ const KNOWN_KEYS: PreferenceKey[] = [
   "language",
   "gridStep",
   "editorAutoHide",
+  "editorStartView",
   "compactSidebar",
 ];
 
@@ -91,6 +92,7 @@ const readStoredPreferences = (): Preferences => {
 
 interface PreferencesContextType {
   preferences: Preferences;
+  ready: boolean;
   updatePreferences: (partial: Partial<Preferences>) => void;
   setPreference: <K extends PreferenceKey>(
     key: K,
@@ -110,6 +112,7 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({
   const [preferences, setPreferences] = useState<Preferences>(
     readStoredPreferences,
   );
+  const [settledUserId, setSettledUserId] = useState<string | null>(null);
 
   // Gate server writes until the initial GET has settled so a first-mount
   // change can never PUT a local default over the stored server value.
@@ -132,15 +135,22 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({
         for (const key of Object.keys(known) as PreferenceKey[]) {
           lastPersistedRef.current[key] = JSON.stringify(known[key]);
         }
-        if (Object.keys(known).length > 0) {
-          setPreferences((prev) => ({ ...prev, ...known }));
+        if (userId || Object.keys(known).length > 0) {
+          setPreferences((prev) => ({
+            ...prev,
+            ...(userId ? { editorStartView: "fit" } : {}),
+            ...known,
+          }));
         }
       })
       .catch(() => {
         // Anonymous/local screens keep using localStorage.
       })
       .finally(() => {
-        if (!cancelled) hydratedRef.current = true;
+        if (!cancelled) {
+          hydratedRef.current = true;
+          setSettledUserId(userId);
+        }
       });
     return () => {
       cancelled = true;
@@ -193,7 +203,12 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({
 
   return (
     <PreferencesContext.Provider
-      value={{ preferences, updatePreferences, setPreference }}
+      value={{
+        preferences,
+        ready: userId === null || settledUserId === userId,
+        updatePreferences,
+        setPreference,
+      }}
     >
       {children}
     </PreferencesContext.Provider>

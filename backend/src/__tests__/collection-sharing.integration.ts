@@ -105,21 +105,24 @@ describe("Collection Sharing - Backend Integration", () => {
     ownerAgent = request.agent(app);
     const ownerCsrfRes = await ownerAgent
       .get("/csrf-token")
-      .set("User-Agent", userAgent);
+      .set("User-Agent", userAgent)
+      .expect(200);
     ownerCsrfHeaderName = ownerCsrfRes.body.header;
     ownerCsrfToken = ownerCsrfRes.body.token;
 
     viewerAgent = request.agent(app);
     const viewerCsrfRes = await viewerAgent
       .get("/csrf-token")
-      .set("User-Agent", userAgent);
+      .set("User-Agent", userAgent)
+      .expect(200);
     viewerCsrfHeaderName = viewerCsrfRes.body.header;
     viewerCsrfToken = viewerCsrfRes.body.token;
 
     editorAgent = request.agent(app);
     const editorCsrfRes = await editorAgent
       .get("/csrf-token")
-      .set("User-Agent", userAgent);
+      .set("User-Agent", userAgent)
+      .expect(200);
     editorCsrfHeaderName = editorCsrfRes.body.header;
     editorCsrfToken = editorCsrfRes.body.token;
   }, 120000);

@@ -62,12 +62,23 @@ export const buildShareLinkToken = (): string =>
 export const hashShareLinkToken = (token: string): string =>
   hashTokenForStorage(token);
 
-export const getDrawingAccess = async (params: {
+type DrawingAccessParams = {
   prisma: Prisma.TransactionClient;
   principal: DrawingPrincipal | null;
   drawingId: string;
   now?: Date;
-}): Promise<DrawingAccess> => {
+};
+
+export type DrawingAccessDetails = {
+  access: DrawingAccess;
+  baseAccess: DrawingAccess;
+  linkExpiresAt: number | null;
+  trashed: boolean;
+};
+
+export const getDrawingAccessDetails = async (
+  params: DrawingAccessParams,
+): Promise<DrawingAccessDetails> => {
   const now = params.now ?? new Date();
   const { principal, prisma, drawingId } = params;
   if (principal?.kind === "guest") {
@@ -75,7 +86,12 @@ export const getDrawingAccess = async (params: {
       principal.drawingId !== drawingId ||
       principal.expiresAt <= now.getTime()
     )
-      return "none";
+      return {
+        access: "none",
+        baseAccess: "none",
+        linkExpiresAt: null,
+        trashed: false,
+      };
 
     const share = await prisma.drawingLinkShare.findFirst({
       where: {
@@ -88,6 +104,7 @@ export const getDrawingAccess = async (params: {
       },
       select: {
         permission: true,
+        expiresAt: true,
         drawing: { select: { userId: true, collectionId: true } },
       },
     });
@@ -95,27 +112,55 @@ export const getDrawingAccess = async (params: {
       !share ||
       isTrashCollectionId(share.drawing.collectionId, share.drawing.userId)
     ) {
-      return "none";
+      return {
+        access: "none",
+        baseAccess: "none",
+        linkExpiresAt: null,
+        trashed: false,
+      };
     }
-    return normalizeDrawingPermission(share.permission) ?? "none";
+    return {
+      access: normalizeDrawingPermission(share.permission) ?? "none",
+      baseAccess: "none",
+      linkExpiresAt: Math.min(
+        principal.expiresAt,
+        share.expiresAt?.getTime() ?? Infinity,
+      ),
+      trashed: false,
+    };
   }
 
   let baseAccess: DrawingAccess = "none";
 
-  // User-based access (owner or explicit ACL).
   if (params.principal?.kind === "user") {
     const drawing = await params.prisma.drawing.findUnique({
       where: { id: params.drawingId },
       select: { userId: true, collectionId: true },
     });
-    if (!drawing) return "none";
-    if (drawing.userId === params.principal.userId) return "owner";
+    const trashed = Boolean(
+      drawing && isTrashCollectionId(drawing.collectionId, drawing.userId),
+    );
     if (
-      principal.instanceAdmin &&
-      (await isCurrentInstanceAdmin(prisma, principal.userId))
-    )
-      return "owner";
-
+      drawing &&
+      (drawing.userId === params.principal.userId ||
+        (params.principal.instanceAdmin &&
+          (await isCurrentInstanceAdmin(prisma, params.principal.userId))))
+    ) {
+      return {
+        access: "owner",
+        baseAccess: "owner",
+        linkExpiresAt: null,
+        trashed,
+      };
+    }
+    if (!drawing || trashed) {
+      return {
+        access: "none",
+        baseAccess: "none",
+        linkExpiresAt: null,
+        trashed,
+      };
+    }
     const perm = await params.prisma.drawingPermission.findUnique({
       where: {
         drawingId_granteeUserId: {
@@ -154,8 +199,18 @@ export const getDrawingAccess = async (params: {
     }
   }
 
-  return baseAccess;
+  // Tokenized guest links only grant access to their validated guest principal.
+  return {
+    access: baseAccess,
+    baseAccess,
+    linkExpiresAt: null,
+    trashed: false,
+  };
 };
+
+export const getDrawingAccess = async (
+  params: DrawingAccessParams,
+): Promise<DrawingAccess> => (await getDrawingAccessDetails(params)).access;
 
 export const canViewDrawing = (
   access: DrawingAccess,

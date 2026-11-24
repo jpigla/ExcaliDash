@@ -1,5 +1,4 @@
 import { api } from "../api";
-import { exportPreviewSvg } from "./previewSvg";
 
 type ExcalidrawLikeData = {
   type?: unknown;
@@ -92,8 +91,9 @@ export const makeSvgPreview = async (
   appState: Record<string, any>,
   files: Record<string, any>,
 ) => {
-  return exportPreviewSvg({
-    elements,
+  const { exportToSvg } = await import("@excalidraw/excalidraw");
+  return exportToSvg({
+    elements: elements.filter((element) => !element.isDeleted),
     appState: {
       ...appState,
       exportBackground: true,

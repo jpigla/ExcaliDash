@@ -1,85 +1,77 @@
 ---
-title: Self-hosted Excalidraw with Collaboration | ExcaliDash
+title: Self-Hosted Excalidraw with Collaboration & Saved Drawings | ExcaliDash
 titleTemplate: false
-description: Self-host Excalidraw with saved drawings, collections, real-time collaboration, and version history. Deploy ExcaliDash with Docker Compose.
+description: Self-host Excalidraw with persistent drawings, collections, real-time collaboration, version history, and OIDC SSO. Deploy ExcaliDash with Docker Compose.
 layout: home
 pageClass: canvas-home
 markdownStyles: true
-footer: false
+footer: true
 
 canvasHero:
   name: "ExcaliDash"
-  headline: Self-hosted Excalidraw, organized.
-  tagline: Saved drawings, collections, real-time collaboration, and version history. Run your own workspace with Docker Compose.
+  tagline: Self-hosted Excalidraw dashboard with collections, real-time collaboration, version history, and backups.
   actions:
     - theme: brand
-      text: Self-host with Docker
+      text: Deploy with Docker
       link: /deploy/docker
     - theme: alt
-      text: View on GitHub
-      link: https://github.com/ZimengXiong/ExcaliDash
+      text: Quick start
+      link: /guide/quick-start
 
 canvasFeatures:
-  - icon: "01"
-    title: Organize
-    details: Group drawings into collections. Search and sort your workspace.
-  - icon: "02"
-    title: Collaborate
-    details: Edit together in real time. Share drawings and collections.
-  - icon: "03"
-    title: Self-host
-    details: Deploy with Docker Compose using SQLite or PostgreSQL.
-  - icon: "04"
-    title: Restore
-    details: Browse drawing history and restore earlier versions.
-  - icon: "05"
-    title: Sign in
-    details: Use local accounts, OpenID Connect, or both.
-  - icon: "06"
-    title: Portable data
-    details: Import, export, and back up your ExcaliDash library.
+  - title: Organize
+    details: Group drawings into collections, search your library, and pick up from any device.
+    link: /guide/first-run
+  - title: Collaborate
+    details: Edit together with live cursors, share drawings or collections, and follow a presenter.
+    link: /guide/collaboration
+  - title: Version history
+    details: Preview earlier snapshots and restore a drawing in two clicks.
+    link: /guide/storage-backups
+  - title: Authentication
+    details: Local accounts, OpenID Connect, or both, plus scoped API keys.
+    link: /guide/authentication
+  - title: Portable backups
+    details: Export your full library with history, or import .excalidraw files.
+    link: /guide/storage-backups
+  - title: Self-hosted
+    details: Docker Compose with SQLite out of the box, or PostgreSQL and S3.
+    link: /deploy/docker
 
 canvasImages:
   - label: All Drawings
     light: /images/workspace-light.png
     dark: /images/workspace.png
-    alt: ExcaliDash dashboard with drawing previews, collections, and search
+    alt: ExcaliDash dashboard showing drawing previews, collections, search, and sorting controls
   - label: Collaboration
     light: /images/collaboration-light.png
     dark: /images/collaboration-dark.png
-    alt: Four collaborators reviewing a deployment diagram, with live named cursors and presence avatars
+    alt: Four collaborators editing a deployment diagram together with live cursors and presence avatars
 ---
 
-## Your drawings, on your server
+## Self-host Excalidraw on your own server
 
-ExcaliDash is an open-source workspace built around the Excalidraw editor. Keep your drawings in a persistent database, organize them into collections, and work together in real time. It is an independent project, not an official Excalidraw product.
+ExcaliDash wraps the Excalidraw editor in a full-stack workspace you host with Docker Compose. Unlike the standalone `excalidraw/excalidraw` container—which stores scenes only in browser `localStorage` and points live collaboration to public servers—ExcaliDash saves drawings to your own SQLite or PostgreSQL database and runs real-time collaboration on your own backend. It is an independent open-source (LGPL-3.0) project, not affiliated with Excalidraw.
 
-### Self-host Excalidraw with Docker Compose
+- **Complete self-hosting walkthrough:** [How to self-host Excalidraw with Docker Compose and collaboration](/guides/self-host-excalidraw)
+- **Comparing options:** [Self-hosted Excalidraw+ alternative](/guides/excalidraw-plus-alternative)
+- **Team SSO:** [Self-hosted Excalidraw with OIDC / SSO (Authentik, Keycloak, Pocket ID)](/guides/excalidraw-oidc-sso)
+- **Production deployment:** [Deploy with Docker Compose, HTTPS, and backups](/deploy/docker)
 
-Run the frontend and backend on your own machine, homelab, or server. The default stack uses SQLite and a persistent Docker volume. Follow the [Excalidraw self-hosting guide](/deploy/docker) for installation, HTTPS, and upgrades.
+## Common questions
 
-### Draw together and control access
+### What does ExcaliDash add to the official Excalidraw Docker image?
 
-Invite people to drawings or collections, choose viewing or editing permissions, and collaborate with live cursors. Use local accounts or OpenID Connect for sign-in. Read the [collaboration guide](/guide/collaboration) and [authentication setup](/guide/authentication).
+The official `excalidraw/excalidraw` container is a static frontend without server-side persistence, user accounts, or a self-hosted collaboration backend. ExcaliDash adds a dashboard, persistent SQLite or PostgreSQL storage, collections, search, self-hosted real-time collaboration, version history, user accounts with OIDC SSO, and backups.
 
-### Save, restore, and back up
+### Does ExcaliDash real-time collaboration stay on my own server?
 
-Drawings are stored on your server so you can return to them from another device. Browse version history, restore an earlier drawing, and export your library. Learn [how storage and backups work](/guide/storage-backups).
+Yes. ExcaliDash runs its own Socket.IO collaboration backend inside the Docker Compose stack, so edits, live cursors, presence avatars, and follow mode stay on your server without needing a separate `excalidraw-room` container. See [Collaboration](/guide/collaboration).
 
-## Questions about self-hosting Excalidraw
+### Is ExcaliDash a self-hosted alternative to Excalidraw+?
 
-### What does ExcaliDash add to Excalidraw?
+Yes. If you want saved drawings, collections, team sharing, live collaboration, version history, and SSO on your own server, see the [Excalidraw+ self-hosted alternative comparison](/guides/excalidraw-plus-alternative).
 
-ExcaliDash embeds the Excalidraw editor and adds a dashboard, persistent drawing storage, collections, sharing permissions, collaboration, version history, and account management.
+### Can I import and export standard `.excalidraw` files?
 
-### Can I collaborate on my own server?
-
-Yes. The ExcaliDash backend handles real-time collaboration. Your reverse proxy must forward WebSocket connections; the [Docker guide](/deploy/docker#configure-https) explains the setup.
-
-### Does restarting Docker erase my drawings?
-
-The default Compose stack stores data in the `backend-data` volume, which survives container restarts and ordinary `docker compose down`. Deleting the volume removes that data. Keep [separate backups](/guide/storage-backups).
-
-### Can I use my existing Excalidraw files?
-
-Yes. ExcaliDash supports import and export of drawings in `.excalidraw` format, as well as library export and import for moving your workspace.
+Yes. Import existing `.excalidraw` files into your library, export drawings back to `.excalidraw` anytime, or export full `.excalidash` archives with version history and uploaded images. See [Storage and backups](/guide/storage-backups).

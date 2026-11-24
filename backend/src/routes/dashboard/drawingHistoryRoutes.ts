@@ -5,6 +5,7 @@ import {
   getDrawingAccess,
 } from "../../authz/sharing";
 import { isGuestRequest } from "../../authz/guestLinkSecurity";
+import { config } from "../../config";
 import { decodeSnapshotField } from "../../snapshots/snapshotCodec";
 import { applySceneUpdateTx, isVersionConflict } from "./sceneUpdate";
 import type { DrawingRouteContext } from "./drawingRouteContext";
@@ -72,7 +73,11 @@ export const registerDrawingHistoryRoutes = (
         prisma.drawingSnapshot.count({ where: { drawingId: id } }),
       ]);
 
-      return res.json({ snapshots, totalCount });
+      return res.json({
+        snapshots,
+        totalCount,
+        retentionDays: config.snapshotRetentionDays,
+      });
     }),
   );
 
@@ -132,7 +137,7 @@ export const registerDrawingHistoryRoutes = (
       }
 
       const [drawing, snapshot] = await Promise.all([
-        prisma.drawing.findUnique({ where: { id } }),
+        prisma.drawing.findUnique({ where: { id }, select: { version: true } }),
         prisma.drawingSnapshot.findFirst({
           where: { id: snapshotId, drawingId: id },
         }),

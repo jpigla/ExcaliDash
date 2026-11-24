@@ -86,7 +86,10 @@ for (const storedPreview of [false, true]) {
         "href",
         /^data:image\/png;base64,/,
       );
-      await expect(card.locator("svg use")).toHaveAttribute("href", /^#image-/);
+      await expect(card.locator("svg use")).toHaveAttribute(
+        "href",
+        /^#.*image-/,
+      );
     } finally {
       await deleteDrawing(request, drawing.id);
     }

@@ -17,6 +17,7 @@ export type RegisterAccountRoutesDeps = {
   ensureAuthEnabled: (res: Response) => Promise<boolean>;
   sanitizeText: (input: unknown, maxLength?: number) => string;
   mailer?: Mailer;
+  disconnectRevokedApiKey?: (apiKeyId: string) => void;
   config: {
     enablePasswordReset: boolean;
     enableAuditLogging: boolean;

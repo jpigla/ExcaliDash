@@ -21,8 +21,9 @@ import {
 } from "./guestUploadPolicy";
 import { guestAccessEnded } from "./routes/dashboard/drawingGuestLock";
 import {
-  hasDrawingFileContent,
+  storedFileFilter,
   storeDrawingFileOnce,
+  type StoredFileMetadata,
 } from "./drawingFileStore";
 import {
   isS3Enabled,
@@ -58,6 +59,8 @@ export const isInlineGuestImage = (dataURL: unknown): boolean => {
   return mimeType !== undefined && isGuestImageType(mimeType.toLowerCase());
 };
 
+const base64Header = /^data:([^;]+);base64,/;
+
 /**
  * Decode a base64 data URL into a Buffer and its MIME type.
  * Returns null if the string is not a valid data URL.
@@ -65,15 +68,15 @@ export const isInlineGuestImage = (dataURL: unknown): boolean => {
 export const decodeDataURL = (
   dataURL: string,
 ): { buffer: Buffer; mimeType: string } | null => {
-  const match = dataURL.match(/^data:([^;]+);base64,(.+)$/s);
+  const match = dataURL.match(base64Header);
   if (!match) return null;
 
   const mimeType = match[1];
-  const base64 = match[2];
+  const base64 = dataURL.slice(match[0].length);
 
   try {
     const buffer = Buffer.from(base64, "base64");
-    return { buffer, mimeType };
+    return buffer.length > 0 ? { buffer, mimeType } : null;
   } catch {
     return null;
   }
@@ -82,9 +85,9 @@ export const decodeDataURL = (
 /** Reclaim only this request's fresh generation when another row won. */
 export const cleanupUnusedS3Upload = async (
   freshKey: string,
-  stored: { storage: string; s3Key: string | null },
+  stored: Pick<StoredFileMetadata, "storage" | "s3Key"> | null,
 ): Promise<void> => {
-  if (stored.storage === "s3" && stored.s3Key === freshKey) return;
+  if (stored?.storage === "s3" && stored.s3Key === freshKey) return;
   try {
     await deleteS3Object(freshKey);
   } catch (error) {
@@ -94,6 +97,41 @@ export const cleanupUnusedS3Upload = async (
       error,
     });
   }
+};
+
+export const uploadDrawingFileToS3 = async (
+  prisma: Pick<PrismaClient, "$queryRaw" | "drawingFile">,
+  file: { drawingId: string; fileId: string; mimeType: string; s3Key: string },
+  buffer: Buffer,
+): Promise<StoredFileMetadata> => {
+  const { drawingId, fileId, s3Key, mimeType } = file;
+  let stored: StoredFileMetadata;
+  try {
+    await uploadBuffer(s3Key, buffer, mimeType);
+    stored = await storeDrawingFileOnce(prisma, {
+      ...file,
+      sizeBytes: buffer.length,
+      storage: "s3",
+      data: null,
+    });
+  } catch (error) {
+    try {
+      const winner = await prisma.drawingFile.findUnique({
+        where: { drawingId_fileId: { drawingId, fileId } },
+        select: { storage: true, s3Key: true },
+      });
+      await cleanupUnusedS3Upload(s3Key, winner);
+    } catch (lookupError) {
+      console.warn("[files] Failed to reconcile an S3 upload", {
+        s3Key,
+        error: lookupError,
+      });
+    }
+    throw error;
+  }
+
+  await cleanupUnusedS3Upload(s3Key, stored);
+  return stored;
 };
 
 /**
@@ -117,7 +155,10 @@ export const internDrawingFiles = async (
   files: Record<string, any>,
   userId: string,
   drawingId: string,
-  prisma: Pick<PrismaClient, "drawingFile" | "guestUploadCleanup">,
+  prisma: Pick<
+    PrismaClient,
+    "$queryRaw" | "drawingFile" | "guestUploadCleanup"
+  >,
   persist: DrawingFilePersist = (content) =>
     storeDrawingFileOnce(prisma, content),
   admitUpload?: AdmitDrawingFileUpload,
@@ -132,7 +173,7 @@ export const internDrawingFiles = async (
   // networks.
   const UPLOAD_CONCURRENCY = 8;
 
-  const processFile = async ([fileId, file]: [string, any]): Promise<void> => {
+  const entries = Object.entries(files).filter(([fileId, file]) => {
     if (!VALID_FILE_ID.test(fileId)) {
       // Reject path-traversal candidates rather than silently storing them
       // under a forged key. Drop from output so the bad entry never reaches
@@ -141,94 +182,75 @@ export const internDrawingFiles = async (
         `[files] Skipping file with invalid id: ${JSON.stringify(fileId)}`,
       );
       delete result[fileId];
-      return;
+      return false;
     }
 
     const dataURL: unknown = file?.dataURL;
-    if (typeof dataURL !== "string" || !dataURL.startsWith("data:")) {
-      // Not a base64 data URL — leave unchanged (https://, /api/files/, etc.)
-      return;
-    }
+    return typeof dataURL === "string" && base64Header.test(dataURL);
+  });
 
-    const decoded = decodeDataURL(dataURL);
-    if (!decoded) return;
-
+  const processFile = async (
+    [fileId, file]: [string, any],
+    existing?: StoredFileMetadata,
+  ): Promise<void> => {
     // File ids are immutable content hashes, just as on the raw upload route.
     // A stale client's inline copy must not rewrite bytes used by the current
     // scene or retained snapshots, even if its scene save later conflicts.
-    const existing = await prisma.drawingFile.findUnique({
-      where: { drawingId_fileId: { drawingId, fileId } },
-    });
-    if (existing && hasDrawingFileContent(existing)) {
-      result[fileId] = {
-        ...file,
-        mimeType: existing.mimeType,
-        dataURL:
-          cfg?.publicUrl && existing.storage === "s3" && existing.s3Key
-            ? getPublicUrl(existing.s3Key)
-            : `/api/files/${drawingId}/${fileId}`,
-      };
-      return;
-    }
-
-    const sizeBytes = decoded.buffer.length;
-    await admitUpload?.({ fileId, sizeBytes });
-
-    if (s3Enabled) {
-      const ext = MIME_TO_EXT[decoded.mimeType] ?? "bin";
-      const s3Key = buildS3Key(userId, drawingId, fileId, ext, randomUUID());
-
-      await uploadBuffer(s3Key, decoded.buffer, decoded.mimeType);
-
-      // Drawing-scoped access URL: a file id alone would be ambiguous
-      // because the same content hash legitimately repeats across drawings.
-      const stored = await persist({
-        drawingId,
-        fileId,
-        mimeType: decoded.mimeType,
-        sizeBytes,
-        storage: "s3",
-        s3Key,
-        data: null,
-      }).catch(async (error) => {
-        // The object was written before the guarded database mutation.
-        // Reclaim this unpublished generation when access is revoked.
-        if (
-          error === guestAccessEnded ||
-          error instanceof GuestUploadLimitError
-        ) {
-          await discardGuestS3Upload(prisma, { s3Key, drawingId, sizeBytes });
-        }
-        throw error;
-      });
-      if (admitUpload) {
-        if (stored.storage !== "s3" || stored.s3Key !== s3Key) {
-          await discardGuestS3Upload(prisma, { s3Key, drawingId, sizeBytes });
-        }
-      } else {
-        await cleanupUnusedS3Upload(s3Key, stored);
+    let stored = existing;
+    if (!stored) {
+      const decoded = decodeDataURL(file.dataURL);
+      if (!decoded) {
+        delete result[fileId];
+        return;
       }
-      result[fileId] = {
-        ...file,
-        mimeType: stored.mimeType,
-        dataURL:
-          cfg?.publicUrl && stored.storage === "s3" && stored.s3Key
-            ? getPublicUrl(stored.s3Key)
-            : `/api/files/${drawingId}/${fileId}`,
-      };
-      return;
+      const { mimeType, buffer } = decoded;
+      await admitUpload?.({ fileId, sizeBytes: buffer.length });
+      const s3Key = s3Enabled
+        ? buildS3Key(
+            userId,
+            drawingId,
+            fileId,
+            MIME_TO_EXT[mimeType] ?? "bin",
+            randomUUID(),
+          )
+        : null;
+      if (s3Key && !admitUpload) {
+        stored = await uploadDrawingFileToS3(
+          prisma,
+          { drawingId, fileId, mimeType, s3Key },
+          buffer,
+        );
+      } else {
+        if (s3Key) await uploadBuffer(s3Key, buffer, mimeType);
+        stored = await persist({
+          drawingId,
+          fileId,
+          mimeType,
+          sizeBytes: buffer.length,
+          storage: s3Key ? "s3" : "db",
+          s3Key,
+          data: s3Key ? null : buffer,
+        }).catch(async (error) => {
+          if (
+            s3Key &&
+            (error === guestAccessEnded ||
+              error instanceof GuestUploadLimitError)
+          )
+            await discardGuestS3Upload(prisma, {
+              drawingId,
+              s3Key,
+              sizeBytes: buffer.length,
+            });
+          throw error;
+        });
+        if (s3Key && (stored.storage !== "s3" || stored.s3Key !== s3Key))
+          await discardGuestS3Upload(prisma, {
+            drawingId,
+            s3Key,
+            sizeBytes: buffer.length,
+          });
+      }
     }
-
-    // Database-bytes mode: store the raw bytes inline in DrawingFile.data.
-    const stored = await persist({
-      drawingId,
-      fileId,
-      mimeType: decoded.mimeType,
-      sizeBytes,
-      storage: "db",
-      s3Key: null,
-      data: decoded.buffer,
-    });
     result[fileId] = {
       ...file,
       mimeType: stored.mimeType,
@@ -239,11 +261,25 @@ export const internDrawingFiles = async (
     };
   };
 
-  const entries = Object.entries(files);
-  for (let i = 0; i < entries.length; i += UPLOAD_CONCURRENCY) {
-    await Promise.all(
-      entries.slice(i, i + UPLOAD_CONCURRENCY).map(processFile),
-    );
+  const LOOKUP_BATCH_SIZE = 256;
+  for (let i = 0; i < entries.length; i += LOOKUP_BATCH_SIZE) {
+    const batch = entries.slice(i, i + LOOKUP_BATCH_SIZE);
+    const stored = await prisma.drawingFile.findMany({
+      where: {
+        drawingId,
+        fileId: { in: batch.map(([fileId]) => fileId) },
+        ...storedFileFilter,
+      },
+      select: { fileId: true, mimeType: true, storage: true, s3Key: true },
+    });
+    const byId = new Map(stored.map((row) => [row.fileId, row]));
+    for (let j = 0; j < batch.length; j += UPLOAD_CONCURRENCY) {
+      await Promise.all(
+        batch
+          .slice(j, j + UPLOAD_CONCURRENCY)
+          .map((entry) => processFile(entry, byId.get(entry[0]))),
+      );
+    }
   }
 
   return result;

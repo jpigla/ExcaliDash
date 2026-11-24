@@ -110,7 +110,7 @@ export const registerDrawingSharingRoutes = (
 
   // Kick any connected collaborators whose access to this drawing just changed.
   // Best-effort: never let a socket failure break the sharing HTTP response.
-  const revokeLiveAccess = async (drawingId: string): Promise<void> => {
+  const refreshLiveAccess = async (drawingId: string): Promise<void> => {
     if (!revalidateDrawingAccess) return;
     try {
       await revalidateDrawingAccess(drawingId);
@@ -275,6 +275,7 @@ export const registerDrawingSharingRoutes = (
       });
 
       invalidateDrawingsCache();
+      await refreshLiveAccess(id);
 
       if (config.enableAuditLogging) {
         await logAuditEvent({
@@ -313,7 +314,7 @@ export const registerDrawingSharingRoutes = (
         where: { id: permId, drawingId: id },
       });
       invalidateDrawingsCache();
-      await revokeLiveAccess(id);
+      await refreshLiveAccess(id);
 
       if (config.enableAuditLogging) {
         await logAuditEvent({
@@ -564,7 +565,7 @@ export const registerDrawingSharingRoutes = (
       });
       if (!share) return res.status(404).json({ error: "Link not found" });
 
-      await revokeLiveAccess(id);
+      await refreshLiveAccess(id);
       await recordLinkEvent(
         req,
         id,
@@ -609,7 +610,7 @@ export const registerDrawingSharingRoutes = (
         return revoked.count > 0;
       });
       if (changed) {
-        await revokeLiveAccess(id);
+        await refreshLiveAccess(id);
         await recordLinkEvent(
           req,
           id,

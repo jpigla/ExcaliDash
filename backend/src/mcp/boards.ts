@@ -432,7 +432,7 @@ export function createBoardTools(
       let saved: { elements: string; files: string };
       let frameId: string | undefined;
       try {
-        const { drawing } = await applySceneUpdateTx({
+        const { scene } = await applySceneUpdateTx({
           prisma,
           drawingId: input.boardId,
           versionGuard: input.revision,
@@ -504,7 +504,7 @@ export function createBoardTools(
             return { data: { elements, preview: null } };
           },
         });
-        saved = drawing;
+        saved = scene;
       } catch (error) {
         if (error instanceof AlreadyApplied)
           return { ...error.result, url: url(input.boardId), replayed: true };

@@ -1,16 +1,19 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { NavigateFunction } from "react-router-dom";
 import type { MutableRefObject } from "react";
 import { toast } from "sonner";
 import * as api from "../../api";
+import { dropInvalidOrderKeys } from "../../utils/orderKeys";
+import { loadDrawing } from "../../utils/drawingPrefetch";
 import { rehydrateFilesProgressive } from "../../utils/rehydrateFiles";
 import {
+  getElementOrder,
   getPersistedAppState,
   hasRenderableElements,
   isGuestElementTombstone,
   isInlineImageFile,
 } from "./shared";
-import { resetLibrarySync } from "./librarySync";
+import { rebaseLibrary, resetLibrarySync } from "./librarySync";
 
 type AccessLevel = "none" | "view" | "edit" | "owner";
 
@@ -19,6 +22,9 @@ type SceneLoaderParams = {
   guestShareId?: string;
   onGuestAccessEnded?: () => void;
   user: unknown;
+  isReady: boolean;
+  canEdit: boolean;
+  debouncedSaveLibrary: (items: any[]) => void;
   location: {
     pathname: string;
     search: string;
@@ -33,12 +39,14 @@ type SceneLoaderParams = {
     latestFiles: MutableRefObject<any>;
     isSyncing: MutableRefObject<boolean>;
     lastSyncedFiles: MutableRefObject<Record<string, any>>;
-    lastSyncedElementOrderSig: MutableRefObject<string>;
+    lastSyncedElementOrder: MutableRefObject<readonly string[] | null>;
     lastPersistedFiles: MutableRefObject<Record<string, any>>;
     currentDrawingVersion: MutableRefObject<number | null>;
     lastPersistedElements: MutableRefObject<readonly any[]>;
     suspiciousBlankLoad: MutableRefObject<boolean>;
     hasSceneChangesSinceLoad: MutableRefObject<boolean>;
+    localSceneRevision: MutableRefObject<number>;
+    savedSceneRevision: MutableRefObject<number>;
     excalidrawAPI: MutableRefObject<any>;
     latestAppState: MutableRefObject<any>;
     isBootstrappingScene: MutableRefObject<boolean>;
@@ -73,6 +81,9 @@ export const useEditorSceneLoader = ({
   guestShareId,
   onGuestAccessEnded,
   user,
+  isReady,
+  canEdit,
+  debouncedSaveLibrary,
   location,
   navigate,
   refs,
@@ -94,12 +105,13 @@ export const useEditorSceneLoader = ({
     refs.initialSceneElements.current = [];
     refs.latestFiles.current = {};
     refs.lastSyncedFiles.current = {};
-    refs.lastSyncedElementOrderSig.current = "";
+    refs.lastSyncedElementOrder.current = null;
     refs.lastPersistedFiles.current = {};
     refs.currentDrawingVersion.current = null;
     refs.lastPersistedElements.current = [];
     refs.suspiciousBlankLoad.current = false;
     refs.hasSceneChangesSinceLoad.current = false;
+    refs.savedSceneRevision.current = refs.localSceneRevision.current;
     refs.excalidrawAPI.current = null;
   }, [refs]);
 
@@ -111,6 +123,9 @@ export const useEditorSceneLoader = ({
       ? (user as { id?: unknown }).id
       : undefined;
   const userIdKey = typeof userId === "string" ? userId : null;
+  const libraryLoad = useRef<{
+    request: Promise<Awaited<ReturnType<typeof api.getLibrary>> | null>;
+  } | null>(null);
 
   useEffect(() => {
     // A slow, stale load must never write its result into the persistence refs
@@ -132,28 +147,22 @@ export const useEditorSceneLoader = ({
         return;
       }
       try {
-        const libraryItemsPromise = userIdKey
-          ? api.getLibrary().catch((err) => {
-              console.warn("Failed to load library, using empty:", err);
-              return [];
-            })
-          : Promise.resolve([]);
-        const [data, libraryItems] = await Promise.all([
-          api.getDrawing(id, ...(guestShareId ? [guestShareId] : [])),
-          libraryItemsPromise,
-        ]);
+        const data = guestShareId
+          ? await api.getDrawing(id, { guestShareId })
+          : await loadDrawing(id);
         if (cancelled) return;
-        if (userIdKey) void resetLibrarySync(libraryItems);
+        if (
+          !Array.isArray(data.elements) ||
+          typeof data.version !== "number" ||
+          !Number.isInteger(data.version) ||
+          (data.accessLevel !== "view" &&
+            data.accessLevel !== "edit" &&
+            data.accessLevel !== "owner")
+        ) {
+          throw new Error("Unexpected response while loading drawing");
+        }
         setDrawingName(data.name);
-        setAccessLevel(
-          data.accessLevel === "view" ||
-            data.accessLevel === "edit" ||
-            data.accessLevel === "owner"
-            ? data.accessLevel
-            : guestShareId
-              ? "none"
-              : "owner",
-        );
+        setAccessLevel(data.accessLevel);
         const rawElements = guestShareId
           ? (data.elements || []).filter(
               (element) => !isGuestElementTombstone(element),
@@ -175,9 +184,15 @@ export const useEditorSceneLoader = ({
               ),
             )
           : files;
-        const elements = normalizeImageElementStatus(rawElements, canvasFiles);
+        // A malformed order key makes Excalidraw's restore throw and the
+        // editor never finishes loading.
+        const elements = normalizeImageElementStatus(
+          dropInvalidOrderKeys(rawElements),
+          canvasFiles,
+        );
         const hasPreview =
-          typeof data.preview === "string" && data.preview.trim().length > 0;
+          (data as { hasPreview?: boolean }).hasPreview === true ||
+          (typeof data.preview === "string" && data.preview.trim().length > 0);
         const loadedRenderable = hasRenderableElements(elements);
         refs.suspiciousBlankLoad.current = !loadedRenderable && hasPreview;
         refs.hasSceneChangesSinceLoad.current = false;
@@ -185,9 +200,9 @@ export const useEditorSceneLoader = ({
         refs.initialSceneElements.current = elements;
         refs.latestFiles.current = files;
         refs.lastSyncedFiles.current = files;
+        refs.lastSyncedElementOrder.current = getElementOrder(elements);
         refs.lastPersistedFiles.current = files;
-        refs.currentDrawingVersion.current =
-          typeof data.version === "number" ? data.version : null;
+        refs.currentDrawingVersion.current = data.version;
         refs.lastPersistedElements.current = elements;
         elements.forEach((element: any) => recordElementVersion(element));
         const persistedAppState = getPersistedAppState(data.appState || {});
@@ -200,7 +215,7 @@ export const useEditorSceneLoader = ({
           elements,
           appState: hydratedAppState,
           files: canvasFiles,
-          libraryItems,
+          scrollToContent: Boolean(guestShareId),
         });
 
         // Stream referenced files into the canvas as they land. Each hydrated
@@ -268,6 +283,8 @@ export const useEditorSceneLoader = ({
           files,
           handleFileReady,
           () => cancelled,
+          undefined,
+          undefined,
           guestShareId ? { drawingId: id, guestShareId } : undefined,
         );
       } catch (err) {
@@ -310,7 +327,7 @@ export const useEditorSceneLoader = ({
         refs.initialSceneElements.current = [];
         refs.latestFiles.current = {};
         refs.lastSyncedFiles.current = {};
-        refs.lastSyncedElementOrderSig.current = "";
+        refs.lastSyncedElementOrder.current = null;
         refs.lastPersistedFiles.current = {};
         refs.currentDrawingVersion.current = null;
         refs.lastPersistedElements.current = [];
@@ -347,4 +364,56 @@ export const useEditorSceneLoader = ({
     setLoadError,
     userIdKey,
   ]);
+
+  useEffect(() => {
+    if (!id || !userIdKey) return;
+    // Edits made before hydration are relative to the empty canvas library.
+    void resetLibrarySync([]);
+    libraryLoad.current = {
+      request: api.getLibrary().catch((error) => {
+        console.warn("Failed to load library:", error);
+        return null;
+      }),
+    };
+    return () => {
+      libraryLoad.current = null;
+    };
+  }, [id, userIdKey, location.hash, location.pathname, location.search]);
+
+  useEffect(() => {
+    const load = libraryLoad.current;
+    const editor = refs.excalidrawAPI.current;
+    if (!isReady || !load || !editor) return;
+    let cancelled = false;
+    const canHydrate = () =>
+      !cancelled &&
+      libraryLoad.current === load &&
+      refs.excalidrawAPI.current === editor;
+    void load.request
+      .then((items) => {
+        if (!items || !canHydrate()) return;
+        return editor.updateLibrary({
+          // Merge inside Excalidraw's update queue: an edit or #addLibrary
+          // import made while loading is relative to the empty library, so
+          // keep it on top of the server items instead of dropping either.
+          libraryItems: (currentItems: readonly any[]) => {
+            if (!canHydrate()) return currentItems;
+            void resetLibrarySync(items);
+            return rebaseLibrary([], currentItems, items);
+          },
+        });
+      })
+      .catch((error) => console.warn("Failed to hydrate library:", error));
+    return () => {
+      cancelled = true;
+    };
+  }, [isReady, refs]);
+
+  return useCallback(
+    (items: readonly any[]) => {
+      if (!libraryLoad.current) return;
+      if (canEdit) debouncedSaveLibrary([...items]);
+    },
+    [canEdit, debouncedSaveLibrary],
+  );
 };

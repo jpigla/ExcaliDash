@@ -56,6 +56,7 @@ type EditorViewProps = {
   onToggleFollow: (peer: Peer) => void;
   theme: string;
   onBackClick: () => void;
+  onBackIntent: () => void;
   onCanvasChange: (
     elements: readonly any[],
     appState: any,
@@ -168,6 +169,7 @@ export const EditorView: React.FC<EditorViewProps> = ({
   onToggleFollow,
   theme,
   onBackClick,
+  onBackIntent,
   onCanvasChange,
   onCanvasDropCapture,
   onExportClick,
@@ -209,6 +211,8 @@ export const EditorView: React.FC<EditorViewProps> = ({
       <div className="flex items-center gap-4">
         <button
           onClick={onBackClick}
+          onPointerEnter={onBackIntent}
+          onFocus={onBackIntent}
           disabled={isSavingOnLeave}
           className={`flex items-center gap-2 p-2 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-full text-gray-600 dark:text-gray-300 disabled:opacity-50 disabled:cursor-wait transition-all duration-200 ${isSavingOnLeave ? "pr-4" : ""}`}
         >

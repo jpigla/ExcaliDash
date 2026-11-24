@@ -40,10 +40,11 @@ vi.mock("@excalidraw/excalidraw", () => {
       },
     }),
     exportToSvg: vi.fn(async () => ({ outerHTML: "<svg />" })),
+    exportToCanvas: vi.fn(),
   };
 });
 vi.mock("../src/api", () => ({
-  updateDrawing: vi.fn(async () => ({ version: 2 })),
+  saveDrawing: vi.fn(async () => ({ version: 2 })),
   updateLibrary: vi.fn(),
   getDrawingHistory: vi.fn(),
   getDrawingSnapshot: vi.fn(),
@@ -115,7 +116,7 @@ const advance = async (ms: number) => {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
-  vi.mocked(api.updateDrawing)
+  vi.mocked(api.saveDrawing)
     .mockReset()
     .mockResolvedValue({ version: 2 } as never);
   portalTargets.length = 0;
@@ -156,7 +157,8 @@ function persistenceHarness() {
     excalidrawAPI: ref(liveAPI),
     isSyncing: ref(false),
     isUnmounting: ref(false),
-    lastLocalChangeAt: ref(1),
+    localSceneRevision: ref(1),
+    savedSceneRevision: ref(0),
     lastPersistedElements: ref(liveElements),
     lastPersistedFiles: ref({}),
     lastSyncedFiles: ref({}),
@@ -190,15 +192,14 @@ function persistenceHarness() {
       drawingName: "Drawing",
       isSavingOnLeave: false,
       newName: "Drawing",
-      user: null,
       refs: {
         ...refs,
         historyRestorePending: nextPersistence.historyRestorePendingRef,
         saveData: nextPersistence.saveDataRef,
         savePreview: nextPersistence.savePreviewRef,
       },
-      debouncedSaveLibrary: nextPersistence.debouncedSaveLibrary,
       enqueueSceneSave: nextPersistence.enqueueSceneSave,
+      flushBroadcastChanges: vi.fn(),
       resolveSafeSnapshot,
       setAutoHideEnabled: vi.fn(),
       setDrawingName: vi.fn(),
@@ -305,22 +306,27 @@ describe("isolated history preview", () => {
     });
     testWindow.dispatchEvent(key);
     await settle();
+    h.refs.localSceneRevision.current++;
     testWindow.dispatchEvent(new Event("pagehide"));
-    expect(api.updateDrawing).toHaveBeenCalledWith(
+    expect(api.saveDrawing).toHaveBeenCalledWith(
       "drawing",
       expect.objectContaining({ elements: liveElements }),
     );
     const sceneWrites = vi
-      .mocked(api.updateDrawing)
+      .mocked(api.saveDrawing)
       .mock.calls.filter(([, data]) => data.elements);
     expect(sceneWrites.length).toBeGreaterThan(0);
     sceneWrites.forEach(([, data]) => {
       expect(data.elements).toEqual(liveElements);
       expect(data.files ?? {}).not.toHaveProperty("oldImage");
     });
+    // Thumbnails only embed files referenced by the live scene, downscaled.
     expect(exportToSvg).toHaveBeenCalledWith(
-      expect.objectContaining({ elements: liveElements, files: liveFiles }),
+      expect.objectContaining({ elements: liveElements }),
     );
+    vi.mocked(exportToSvg).mock.calls.forEach(([options]) => {
+      expect(options.files ?? {}).not.toHaveProperty("oldImage");
+    });
     expect(saveDrawingKeepalive).toHaveBeenCalledWith(
       "drawing",
       expect.objectContaining({ elements: liveElements, files: liveFiles }),
@@ -357,7 +363,7 @@ describe("isolated history preview", () => {
     const h = persistenceHarness();
     const renderer = await render(<h.Harness />);
     await clickSnapshot(renderer);
-    expect(api.updateDrawing).not.toHaveBeenCalled();
+    expect(api.saveDrawing).not.toHaveBeenCalled();
     const restoreButton = () =>
       renderer.root.findAll(
         (node) =>
@@ -369,12 +375,12 @@ describe("isolated history preview", () => {
     await act(async () => {
       await restoreButton().props.onClick();
     });
-    expect(api.updateDrawing).not.toHaveBeenCalled();
+    expect(api.saveDrawing).not.toHaveBeenCalled();
     expect(window.location.reload).not.toHaveBeenCalled();
     await act(async () => {
       await restoreButton().props.onClick();
     });
-    expect(api.updateDrawing).toHaveBeenCalledWith(
+    expect(api.saveDrawing).toHaveBeenCalledWith(
       "drawing",
       expect.objectContaining({ elements: liveElements }),
     );
@@ -387,7 +393,7 @@ describe("isolated history preview", () => {
     await render(<h.Harness />);
     let finishScene!: () => void;
     let finishPreview!: () => void;
-    vi.mocked(api.updateDrawing)
+    vi.mocked(api.saveDrawing)
       .mockImplementationOnce(
         () =>
           new Promise((resolve) => {
@@ -427,7 +433,7 @@ describe("isolated history preview", () => {
       await restoring;
     });
     expect(restore).toHaveBeenCalledOnce();
-    const writes = vi.mocked(api.updateDrawing).mock.calls.length;
+    const writes = vi.mocked(api.saveDrawing).mock.calls.length;
     h.persistence.debouncedSave(
       "drawing",
       liveElements,
@@ -443,7 +449,7 @@ describe("isolated history preview", () => {
     await h.commands.handleBackClick();
     testWindow.dispatchEvent(new Event("pagehide"));
     await advance(31_000);
-    expect(api.updateDrawing).toHaveBeenCalledTimes(writes);
+    expect(api.saveDrawing).toHaveBeenCalledTimes(writes);
     expect(saveDrawingKeepalive).not.toHaveBeenCalled();
     expect(h.persistence.historyRestorePendingRef.current).toBe(true);
   });
@@ -461,19 +467,19 @@ describe("isolated history preview", () => {
     h.liveAPI.getSceneElementsIncludingDeleted.mockReturnValue(newest);
     const restore = vi.fn(async () => {});
     await h.persistence.runHistoryRestore("drawing", restore);
-    expect(api.updateDrawing).toHaveBeenCalledWith(
+    expect(api.saveDrawing).toHaveBeenCalledWith(
       "drawing",
       expect.objectContaining({ elements: newest }),
     );
     await advance(1000);
-    expect(api.updateDrawing).toHaveBeenCalledOnce();
+    expect(api.saveDrawing).toHaveBeenCalledOnce();
     expect(restore).toHaveBeenCalledOnce();
   });
 
   it("does not restore if the final live backup fails", async () => {
     const h = persistenceHarness();
     await render(<h.Harness />);
-    vi.mocked(api.updateDrawing).mockRejectedValueOnce(new Error("offline"));
+    vi.mocked(api.saveDrawing).mockRejectedValueOnce(new Error("offline"));
     const restore = vi.fn(async () => {});
     const consoleError = vi
       .spyOn(console, "error")
@@ -501,7 +507,7 @@ describe("isolated history preview", () => {
       liveAppState,
       liveFiles,
     );
-    expect(api.updateDrawing).toHaveBeenCalledTimes(2);
+    expect(api.saveDrawing).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -584,6 +590,7 @@ describe("sharing placement and chrome", () => {
         peers={[]}
         theme="light"
         onBackClick={vi.fn()}
+        onBackIntent={vi.fn()}
         onCanvasChange={vi.fn()}
         onCanvasDropCapture={drop}
         onExportClick={vi.fn()}

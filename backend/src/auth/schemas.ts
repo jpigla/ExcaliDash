@@ -153,5 +153,6 @@ export const userPreferencesSchema = z
     editorAutoHide: z.boolean().optional(),
     editorStartView: z.enum(["fit", "last"]).optional(),
     compactSidebar: z.boolean().optional(),
+    appendDroppedDrawings: z.boolean().optional(),
   })
   .strict();

@@ -67,6 +67,7 @@ export type DashboardRouteDeps = {
   config: {
     nodeEnv: string;
     enableAuditLogging: boolean;
+    snapshotMinIntervalMs?: number;
   };
   logAuditEvent: LogAuditEvent;
   internDrawingFiles: (
@@ -80,7 +81,12 @@ export type DashboardRouteDeps = {
   // disconnect collaborators whose access was just revoked. Optional so route
   // unit tests can omit the socket layer.
   revalidateDrawingAccess?: (drawingId: string) => Promise<void> | void;
-  emitDrawingScene?: (drawingId: string, payload: unknown) => Promise<void>;
+  emitDrawingScene?: (
+    drawingId: string,
+    payload: unknown,
+    senderId?: string,
+  ) => Promise<void>;
+  revalidateCollectionAccess?: (collectionId: string) => Promise<void> | void;
   // Socket.IO server used to broadcast edits into a drawing's
   // collaboration room. Optional so route unit tests can omit the socket layer.
   io?: SocketIoServer;

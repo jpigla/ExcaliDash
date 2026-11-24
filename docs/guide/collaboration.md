@@ -1,33 +1,32 @@
 ---
-title: Self-hosted Excalidraw Collaboration and Sharing
-description: Collaborate on Excalidraw drawings with your own ExcaliDash server. Share drawings and collections, manage access, and troubleshoot live editing.
+title: Self-Hosted Excalidraw Real-Time Collaboration
+description: Run real-time Excalidraw collaboration on your own server with ExcaliDash. Live cursors, follow mode, drawing and collection sharing, link access, and WebSocket proxy setup.
 ---
 
 # Self-hosted Excalidraw collaboration
 
-ExcaliDash lets people edit Excalidraw drawings together while storing them on your own server. The frontend and backend in the [Docker Compose deployment](/deploy/docker) provide the workspace and real-time connection.
+ExcaliDash runs real-time Excalidraw collaboration on your own backend. Edits, cursors, presence avatars, and viewport updates sync over Socket.IO without sending drawings to third-party servers.
 
-## Share a drawing with your team
+## Share a drawing
 
-1. [Create accounts](/guide/first-run) for the people who will use your workspace, or [configure OpenID Connect](/guide/authentication).
-2. Create or open a drawing and select **Share**.
-3. Add the account you want to invite and choose viewing or editing access.
-4. Have the invited person open the drawing from their shared workspace.
-5. Open the same drawing at the same time to work together. Editing access allows collaborators to change the drawing; viewing access allows them to read it.
+1. [Create local accounts](/guide/first-run) or [set up OpenID Connect](/guide/authentication) for your teammates.
+2. Open a drawing and select **Share**.
+3. Search for an account and assign **View** or **Edit** access.
+4. Have collaborators open the drawing from **Shared with me** or via the drawing URL.
 
-<ThemeScreenshot light="/images/screenshots/share-drawing-light.png" dark="/images/screenshots/share-drawing.png" alt="Share dialog open with account search and access controls" />
+<ThemeScreenshot light="/images/screenshots/share-drawing-light.png" dark="/images/screenshots/share-drawing.png" alt="Share dialog with account search and view/edit permissions" />
 
-Live cursors and presence help you see who is working on the drawing. Select a collaborator's avatar in the editor header to follow their view while they present; panning or zooming yourself stops following.
+### Live cursors and follow mode
 
-<ThemeScreenshot light="/images/collaboration-light.png" dark="/images/collaboration-dark.png" alt="Live deployment drawing with collaborator avatars and named cursors" />
+When multiple people open the same drawing, named cursors and header avatars show who is active on the canvas. Select any collaborator's avatar in the editor header to follow their viewport as they pan and zoom—useful for design reviews and architecture walkthroughs. Panning or zooming yourself exits follow mode immediately.
 
-## Share collections
+<ThemeScreenshot light="/images/collaboration-light.png" dark="/images/collaboration-dark.png" alt="Live deployment diagram with collaborator avatars and named cursors" />
 
-Collections group related drawings. Right-click a collection in the sidebar and select **Share Collection**. Share the collection with other accounts and select their access level to work on a set of drawings together. Keep access scoped to the people who need it.
+## Share a collection
 
-<ThemeScreenshot light="/images/screenshots/share-collection-light.png" dark="/images/screenshots/share-collection.png" alt="Share Collection dialog open for Platform engineering" />
+Collections group related canvases under one permission set. Right-click a collection in the sidebar, select **Share Collection**, and choose who can view or edit the drawings inside it.
 
-## Share a link
+<ThemeScreenshot light="/images/screenshots/share-collection-light.png" dark="/images/screenshots/share-collection.png" alt="Share Collection dialog for Platform engineering" />
 
 Enable account authentication on instances that use guest links to restrict access. In single-user mode with authentication disabled, visitors already have workspace access.
 
@@ -45,21 +44,39 @@ If you use S3 for drawings with sensitive images, keep the bucket private and le
 
 Guests can fetch images referenced by the current visible scene. Images kept only for history are restricted to account access. Each guest link allows up to 60 upload attempts per minute. Across all links for a drawing, guest uploads are limited to 100 MiB and 1,000 files. Unused guest uploads become eligible for cleanup after one hour.
 
-## Configure your reverse proxy
+<ThemeScreenshot light="/images/screenshots/share-link-light.png" dark="/images/screenshots/share-link.png" alt="Drawing Share dialog with Link access menu open" />
 
-For HTTPS deployments, your proxy must forward WebSocket upgrades for `/socket.io/`. Set `FRONTEND_URL` to the origin people use to open your workspace, and configure `TRUST_PROXY` for your trusted proxy chain. Follow the [HTTPS deployment instructions](/deploy/docker#configure-https).
+## Socket.IO access with API keys
+
+Automated clients and bots can join collaboration rooms using a personal API key (`exd_...`):
+
+```js
+import { io } from "socket.io-client";
+
+const socket = io("https://draw.example.com", {
+  auth: { token: process.env.EXCALIDASH_API_KEY },
+});
+```
+
+- Pass the key in `auth.token` only; API keys are ignored if sent in cookies or query parameters.
+- Joining a room requires `drawings:read`; sending updates requires `drawings:write`.
+- Open sockets re-verify key validity, scopes, and account status on activity, so revoking a key disconnects or blocks further updates immediately.
+
+## Reverse proxy WebSocket setup
+
+When terminating HTTPS in front of ExcaliDash, your proxy must upgrade WebSocket connections on `/socket.io/`. Set `FRONTEND_URL` to your public origin and `TRUST_PROXY` to the number of trusted proxy hops. See [Configure HTTPS](/deploy/docker#configure-https).
 
 ## Troubleshoot live editing
 
-If the drawing loads but edits do not appear in the second session:
+If a drawing loads but changes do not sync between sessions:
 
-- Confirm both people opened the same drawing and have the intended permissions.
-- Confirm the reverse proxy forwards WebSocket upgrades.
-- Check that `FRONTEND_URL` matches the deployed URL, including HTTPS.
-- Read the backend logs for connection or authorization errors:
+- Confirm both sessions opened the same drawing and have edit permission.
+- Verify your reverse proxy forwards `Upgrade` and `Connection` headers on `/socket.io/`.
+- Check that `FRONTEND_URL` matches the exact browser origin, including `https://`.
+- Inspect backend logs for WebSocket or permission errors:
 
 ```bash
 docker compose -f docker-compose.prod.yml logs --tail=100 backend
 ```
 
-Collaboration and backups serve different purposes. Use [persistent storage and separate backups](/guide/storage-backups) to protect the workspace over time.
+Live collaboration syncs changes across active sessions; pair it with [storage and backups](/guide/storage-backups) to protect your workspace over time.

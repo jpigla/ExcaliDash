@@ -5,11 +5,6 @@ import ms, { type StringValue } from "ms";
 import { Prisma, PrismaClient } from "./generated/client";
 import { config, authModeEnablesAuth } from "./config";
 import {
-  requireAuth as defaultRequireAuth,
-  optionalAuth as defaultOptionalAuth,
-  authModeService as defaultAuthModeService,
-} from "./middleware/auth";
-import {
   getCsrfTokenHeader,
   getOriginFromReferer,
   sanitizeText,
@@ -21,7 +16,6 @@ import { createMailerFromConfig } from "./mail/resendMailer";
 import { registerAdminRoutes } from "./auth/adminRoutes";
 import { registerCoreRoutes } from "./auth/coreRoutes";
 import { registerOidcRoutes } from "./auth/oidcRoutes";
-import { prisma as defaultPrisma } from "./db/prisma";
 import {
   BOOTSTRAP_USER_ID,
   DEFAULT_SYSTEM_CONFIG_ID,
@@ -95,8 +89,11 @@ type CreateAuthRouterDeps = {
   requireAuth: express.RequestHandler;
   optionalAuth: express.RequestHandler;
   authModeService: AuthModeService;
+  disconnectRevokedApiKey?: (apiKeyId: string) => void;
 };
-const createAuthRouter = (deps: CreateAuthRouterDeps): express.Router => {
+export const createAuthRouter = (
+  deps: CreateAuthRouterDeps,
+): express.Router => {
   const { prisma, requireAuth, optionalAuth, authModeService } = deps;
   const router = express.Router();
   const ensureSystemConfig = authModeService.ensureSystemConfig;
@@ -487,6 +484,7 @@ const createAuthRouter = (deps: CreateAuthRouterDeps): express.Router => {
     requireCsrf,
   });
   registerAccountRoutes({
+    disconnectRevokedApiKey: deps.disconnectRevokedApiKey,
     mailer,
     router,
     prisma,
@@ -503,10 +501,3 @@ const createAuthRouter = (deps: CreateAuthRouterDeps): express.Router => {
   });
   return router;
 };
-const authRouter = createAuthRouter({
-  prisma: defaultPrisma,
-  requireAuth: defaultRequireAuth,
-  optionalAuth: defaultOptionalAuth,
-  authModeService: defaultAuthModeService,
-});
-export default authRouter;

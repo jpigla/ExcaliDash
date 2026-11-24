@@ -1,9 +1,11 @@
 import { PrismaClient } from "../generated/client";
 import {
-  getDrawingAccess,
+  getDrawingAccessDetails,
   canViewDrawing,
+  type DrawingAccessDetails,
   type DrawingPrincipal,
 } from "../authz/sharing";
+import { revalidateSocketApiKey } from "./socketAuth";
 
 export interface PresenceUser {
   id: string;
@@ -15,11 +17,6 @@ export interface PresenceUser {
   avatarVersion?: string;
 }
 
-type AccessCacheEntry = {
-  access: "view" | "edit" | "owner";
-  checkedAtMs: number;
-};
-
 // Per-connection state lives on `socket.data` instead of an external
 // module-scoped map, so it is garbage-collected with the socket and never
 // leaks an entry per failed/short-lived handshake (B5).
@@ -30,7 +27,7 @@ export type SocketState = {
   apiKeyScopes: string[] | null;
   // Id of that API key, so the socket can re-check it for revocation.
   apiKeyId: string | null;
-  access: Map<string, AccessCacheEntry>;
+  access: Map<string, DrawingAccessDetails>;
   joinedRooms: Set<string>;
 };
 
@@ -63,50 +60,186 @@ export type RevalidatableSocket = {
   id: string;
   data: Partial<SocketState>;
   emit: (event: string, payload: unknown) => void;
-  disconnect: (close?: boolean) => void;
+  leave: (roomId: string) => Promise<void> | void;
+  disconnect: (close?: boolean) => unknown;
 };
 
-// Re-validate a set of sockets against a drawing's current access policy and
-// disconnect any that can no longer view it (revoked share / expired link, B15).
+const isLinkExpired = (access: DrawingAccessDetails, now: number): boolean =>
+  access.linkExpiresAt !== null && access.linkExpiresAt <= now;
+
+const setSocketDrawingAccess = (
+  socket: RevalidatableSocket,
+  drawingId: string,
+  roomUsers: Map<string, PresenceUser[]>,
+  details: DrawingAccessDetails | null,
+  reason: "revoked" | "expired" | "trashed" | "api-key-revoked",
+): boolean => {
+  const roomId = `drawing_${drawingId}`;
+  if (!socket.data.joinedRooms?.has(roomId)) return false;
+
+  if (details && canViewDrawing(details.access)) {
+    const previous = socket.data.access?.get(drawingId)?.access;
+    socket.data.access?.set(drawingId, details);
+    if (details.access === "view" && previous && previous !== "view") {
+      socket.emit("access-changed", { drawingId, accessLevel: "view" });
+    }
+    return false;
+  }
+
+  socket.emit("access-changed", { drawingId, accessLevel: "none", reason });
+  socket.data.access?.delete(drawingId);
+  socket.data.joinedRooms.delete(roomId);
+  void socket.leave(roomId);
+  if (reason !== "api-key-revoked") {
+    socket.emit("error", {
+      ...(socket.data.principal?.kind === "guest"
+        ? { code: "GUEST_ACCESS_ENDED" }
+        : {}),
+      message: "Your access to this drawing was revoked",
+    });
+  }
+  const changed =
+    removeSocketFromRooms(roomUsers, [roomId], socket.id).length > 0;
+  if (socket.data.principal?.kind === "guest") socket.disconnect(true);
+  return changed;
+};
+
+export const disconnectInvalidApiKey = (
+  socket: RevalidatableSocket,
+  roomUsers: Map<string, PresenceUser[]>,
+): string[] => {
+  const changedRooms: string[] = [];
+  for (const roomId of socket.data.joinedRooms ?? []) {
+    const drawingId = roomId.slice("drawing_".length);
+    if (
+      setSocketDrawingAccess(
+        socket,
+        drawingId,
+        roomUsers,
+        null,
+        "api-key-revoked",
+      )
+    ) {
+      changedRooms.push(roomId);
+    }
+  }
+  socket.emit("error", { message: "API key is no longer valid" });
+  socket.disconnect(true);
+  return changedRooms;
+};
+
+export const pruneExpiredRoomSockets = (
+  drawingId: string,
+  roomUsers: Map<string, PresenceUser[]>,
+  sockets: RevalidatableSocket[],
+): boolean => {
+  const now = Date.now();
+  let presenceChanged = false;
+  for (const socket of sockets) {
+    const details = socket.data.access?.get(drawingId);
+    if (!details || !isLinkExpired(details, now)) continue;
+    if (
+      setSocketDrawingAccess(
+        socket,
+        drawingId,
+        roomUsers,
+        {
+          ...details,
+          access: details.baseAccess,
+          linkExpiresAt: null,
+        },
+        "expired",
+      )
+    ) {
+      presenceChanged = true;
+    }
+  }
+  return presenceChanged;
+};
+
 export const revalidateRoomSockets = async (params: {
   prisma: PrismaClient;
   drawingId: string;
   roomUsers: Map<string, PresenceUser[]>;
   sockets: RevalidatableSocket[];
-  emitPresence: (roomId: string, users: PresenceUser[]) => void;
+  isCurrent: () => boolean;
+  emitPresence: (roomId: string) => void;
 }): Promise<void> => {
-  const { prisma, drawingId, roomUsers, sockets, emitPresence } = params;
-  const roomId = `drawing_${drawingId}`;
-  await Promise.all(
+  const { prisma, drawingId, roomUsers, sockets, isCurrent, emitPresence } =
+    params;
+  const accessByUser = new Map<
+    string | null,
+    Promise<DrawingAccessDetails | null>
+  >();
+  const scopesByKey = new Map<string, Promise<string[] | null>>();
+  const checks = await Promise.all(
     sockets.map(async (socket) => {
-      // Force a fresh check by dropping any cached grant for this drawing.
-      socket.data.access?.delete(drawingId);
-      const principal = socket.data.principal ?? null;
-      let access: Awaited<ReturnType<typeof getDrawingAccess>> = "none";
-      try {
-        access = await getDrawingAccess({ prisma, principal, drawingId });
-      } catch (error) {
-        console.error("Failed to revalidate drawing socket access:", error);
-      }
-      if (!canViewDrawing(access)) {
-        const changed = removeSocketFromRooms(roomUsers, [roomId], socket.id);
-        for (const changedRoomId of changed) {
-          emitPresence(changedRoomId, roomUsers.get(changedRoomId) ?? []);
+      const keyId = socket.data.apiKeyId;
+      let scopes: string[] | null = null;
+      if (keyId) {
+        if (!scopesByKey.has(keyId)) {
+          scopesByKey.set(
+            keyId,
+            revalidateSocketApiKey(prisma, keyId).catch((error) => {
+              console.error("Failed to revalidate socket API key:", error);
+              return null;
+            }),
+          );
         }
-        socket.data.joinedRooms?.delete(roomId);
-        socket.emit("error", {
-          ...(principal?.kind === "guest"
-            ? { code: "GUEST_ACCESS_ENDED" }
-            : {}),
-          message: "Your access to this drawing was revoked",
-        });
-        socket.disconnect(true);
-      } else {
-        socket.data.access?.set(drawingId, {
-          access: access === "owner" ? "owner" : access,
-          checkedAtMs: Date.now(),
-        });
+        scopes = await scopesByKey.get(keyId)!;
+        if (!scopes) return { socket, scopes, details: null };
       }
+      const principal = socket.data.principal ?? null;
+      const accessKey =
+        principal?.kind === "guest"
+          ? `guest:${socket.id}`
+          : principal
+            ? JSON.stringify([
+                principal.userId,
+                Boolean(principal.instanceAdmin),
+              ])
+            : null;
+      if (!accessByUser.has(accessKey)) {
+        accessByUser.set(
+          accessKey,
+          getDrawingAccessDetails({ prisma, principal, drawingId }).catch(
+            (error) => {
+              console.error(
+                "Failed to revalidate drawing socket access:",
+                error,
+              );
+              return null;
+            },
+          ),
+        );
+      }
+      return { socket, scopes, details: await accessByUser.get(accessKey)! };
     }),
   );
+  if (!isCurrent()) return;
+
+  const changedRooms = new Set<string>();
+  const roomId = `drawing_${drawingId}`;
+  for (const { socket, scopes, details } of checks) {
+    if (!socket.data.joinedRooms?.has(roomId)) continue;
+    if (socket.data.apiKeyId && !scopes) {
+      for (const changed of disconnectInvalidApiKey(socket, roomUsers)) {
+        changedRooms.add(changed);
+      }
+      continue;
+    }
+    if (scopes) socket.data.apiKeyScopes = scopes;
+    const previous = socket.data.access?.get(drawingId);
+    const reason = details?.trashed
+      ? "trashed"
+      : previous && isLinkExpired(previous, Date.now())
+        ? "expired"
+        : "revoked";
+    if (setSocketDrawingAccess(socket, drawingId, roomUsers, details, reason)) {
+      changedRooms.add(roomId);
+    }
+  }
+  if (pruneExpiredRoomSockets(drawingId, roomUsers, sockets))
+    changedRooms.add(roomId);
+  for (const changed of changedRooms) emitPresence(changed);
 };

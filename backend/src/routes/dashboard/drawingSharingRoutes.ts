@@ -17,6 +17,8 @@ import {
   buildShareLinkToken,
   hashShareLinkToken,
   normalizeDrawingPermission,
+  isInstanceAdmin,
+  manageableOwner,
 } from "../../authz/sharing";
 import type { DrawingRouteContext } from "./drawingRouteContext";
 
@@ -132,7 +134,10 @@ export const registerDrawingSharingRoutes = (
         where: { id },
         select: { userId: true },
       });
-      if (!drawing || drawing.userId !== req.user.id) {
+      if (
+        !drawing ||
+        (drawing.userId !== req.user.id && !isInstanceAdmin(req.user))
+      ) {
         return res.status(404).json({ error: "Drawing not found" });
       }
 
@@ -165,7 +170,10 @@ export const registerDrawingSharingRoutes = (
         where: { id },
         select: { userId: true },
       });
-      if (!drawing || drawing.userId !== req.user.id) {
+      if (
+        !drawing ||
+        (drawing.userId !== req.user.id && !isInstanceAdmin(req.user))
+      ) {
         return res.status(404).json({ error: "Drawing not found" });
       }
 
@@ -212,7 +220,10 @@ export const registerDrawingSharingRoutes = (
         where: { id },
         select: { userId: true },
       });
-      if (!drawing || drawing.userId !== req.user.id) {
+      if (
+        !drawing ||
+        (drawing.userId !== req.user.id && !isInstanceAdmin(req.user))
+      ) {
         return res.status(404).json({ error: "Drawing not found" });
       }
 
@@ -227,7 +238,7 @@ export const registerDrawingSharingRoutes = (
           message: "Invalid grantee or permission",
         });
       }
-      if (granteeUserId === req.user.id) {
+      if (granteeUserId === drawing.userId) {
         return res.status(400).json({
           error: "Validation error",
           message: "Cannot share with yourself",
@@ -291,7 +302,10 @@ export const registerDrawingSharingRoutes = (
         where: { id },
         select: { userId: true },
       });
-      if (!drawing || drawing.userId !== req.user.id) {
+      if (
+        !drawing ||
+        (drawing.userId !== req.user.id && !isInstanceAdmin(req.user))
+      ) {
         return res.status(404).json({ error: "Drawing not found" });
       }
 
@@ -319,11 +333,11 @@ export const registerDrawingSharingRoutes = (
   const findOwnedDrawing = (
     db: Prisma.TransactionClient,
     drawingId: string,
-    userId: string,
+    user: NonNullable<express.Request["user"]>,
   ) =>
     db.drawing.findFirst({
-      where: { id: drawingId, userId },
-      select: { collectionId: true },
+      where: { id: drawingId, ...manageableOwner(user) },
+      select: { collectionId: true, userId: true },
     });
 
   const recordLinkEvent = async (
@@ -348,11 +362,13 @@ export const registerDrawingSharingRoutes = (
     "/drawings/:id/link-shares",
     requireAuth,
     asyncHandler(async (req, res) => {
-      const userId = req.user?.id;
-      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const user = req.user;
+      const userId = user?.id;
+      if (!user || !userId)
+        return res.status(401).json({ error: "Unauthorized" });
       const { id } = req.params;
 
-      if (!(await findOwnedDrawing(prisma, id, userId))) {
+      if (!(await findOwnedDrawing(prisma, id, user))) {
         return res.status(404).json({ error: "Drawing not found" });
       }
 
@@ -372,8 +388,9 @@ export const registerDrawingSharingRoutes = (
     requireAuth,
     asyncHandler(async (req, res) => {
       res.set("Cache-Control", "no-store");
-      const userId = req.user?.id;
-      if (!userId || req.user?.authCredentialType !== "jwt") {
+      const user = req.user;
+      const userId = user?.id;
+      if (!user || !userId || user.authCredentialType !== "jwt") {
         return res
           .status(401)
           .json({ error: "Account authentication required" });
@@ -383,7 +400,7 @@ export const registerDrawingSharingRoutes = (
         where: {
           id: shareId,
           drawingId: id,
-          drawing: { userId },
+          drawing: manageableOwner(user),
           revokedAt: null,
           passphraseHash: { not: null },
         },
@@ -409,14 +426,16 @@ export const registerDrawingSharingRoutes = (
     "/drawings/:id/link-shares",
     requireAuth,
     asyncHandler(async (req, res) => {
-      const userId = req.user?.id;
-      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const user = req.user;
+      const userId = user?.id;
+      if (!user || !userId)
+        return res.status(401).json({ error: "Unauthorized" });
       const { id } = req.params;
       const input = createLink.safeParse(req.body);
       if (!input.success) {
         return sendLinkValidationError(res, input.error);
       }
-      if (!(await findOwnedDrawing(prisma, id, userId))) {
+      if (!(await findOwnedDrawing(prisma, id, user))) {
         return res.status(404).json({ error: "Drawing not found" });
       }
 
@@ -427,8 +446,11 @@ export const registerDrawingSharingRoutes = (
         : null;
       const share = await prisma.$transaction(async (tx) => {
         await lockDrawingForGuestAccess(tx, id);
-        const drawing = await findOwnedDrawing(tx, id, userId);
-        if (!drawing || isTrashCollectionId(drawing.collectionId, userId)) {
+        const drawing = await findOwnedDrawing(tx, id, user);
+        if (
+          !drawing ||
+          isTrashCollectionId(drawing.collectionId, drawing.userId)
+        ) {
           return null;
         }
         return tx.drawingLinkShare.create({
@@ -473,14 +495,16 @@ export const registerDrawingSharingRoutes = (
     "/drawings/:id/link-shares/:shareId",
     requireAuth,
     asyncHandler(async (req, res) => {
-      const userId = req.user?.id;
-      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const user = req.user;
+      const userId = user?.id;
+      if (!user || !userId)
+        return res.status(401).json({ error: "Unauthorized" });
       const { id, shareId } = req.params;
       const input = updateLink.safeParse(req.body);
       if (!input.success) {
         return sendLinkValidationError(res, input.error);
       }
-      if (!(await findOwnedDrawing(prisma, id, userId))) {
+      if (!(await findOwnedDrawing(prisma, id, user))) {
         return res.status(404).json({ error: "Drawing not found" });
       }
 
@@ -491,8 +515,11 @@ export const registerDrawingSharingRoutes = (
           : passphrase;
       const share = await prisma.$transaction(async (tx) => {
         await lockDrawingForGuestAccess(tx, id);
-        const drawing = await findOwnedDrawing(tx, id, userId);
-        if (!drawing || isTrashCollectionId(drawing.collectionId, userId)) {
+        const drawing = await findOwnedDrawing(tx, id, user);
+        if (
+          !drawing ||
+          isTrashCollectionId(drawing.collectionId, drawing.userId)
+        ) {
           return null;
         }
         const current = await tx.drawingLinkShare.findFirst({
@@ -555,11 +582,13 @@ export const registerDrawingSharingRoutes = (
     "/drawings/:id/link-shares/:shareId",
     requireAuth,
     asyncHandler(async (req, res) => {
-      const userId = req.user?.id;
-      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const user = req.user;
+      const userId = user?.id;
+      if (!user || !userId)
+        return res.status(401).json({ error: "Unauthorized" });
       const { id, shareId } = req.params;
 
-      if (!(await findOwnedDrawing(prisma, id, userId))) {
+      if (!(await findOwnedDrawing(prisma, id, user))) {
         return res.status(404).json({ error: "Drawing not found" });
       }
       const changed = await prisma.$transaction(async (tx) => {
@@ -569,7 +598,7 @@ export const registerDrawingSharingRoutes = (
             id: shareId,
             drawingId: id,
             revokedAt: null,
-            drawing: { userId },
+            drawing: manageableOwner(user),
           },
           data: {
             revokedAt: new Date(),

@@ -5,6 +5,7 @@ import * as api from "../api";
 import { useAuth } from "../context/AuthContext";
 import { GeneralAccessSection } from "./share-modal/GeneralAccessSection";
 import { SharePeopleSection } from "./share-modal/SharePeopleSection";
+import { CodexAccessSection } from "./share-modal/CodexAccessSection";
 
 type Props = {
   anchorRef: React.RefObject<HTMLElement>;
@@ -213,6 +214,8 @@ export const ShareModal: React.FC<Props> = ({
             handleRevokeUser={handleRevokeUser}
             handleUpdateUserPermission={handleUpdateUserPermission}
           />
+
+          <CodexAccessSection key={drawingId} drawingId={drawingId} />
 
           <GeneralAccessSection
             drawingId={drawingId}

@@ -5,6 +5,7 @@ import {
   canEditDrawing,
   getDrawingAccess,
   isOwnerAccess,
+  isInstanceAdmin,
 } from "../../authz/sharing";
 import { rewritePreviewForInternedFiles } from "../../fileProcessing";
 import {
@@ -139,6 +140,12 @@ export const registerDrawingCreateUpdateRoutes = (
         toInternalTrashCollectionId(targetCollectionIdRaw, req.user.id) ?? null;
 
       if (
+        targetCollectionId?.startsWith("trash:") &&
+        targetCollectionId !== getUserTrashCollectionId(req.user.id)
+      ) {
+        return res.status(404).json({ error: "Collection not found" });
+      }
+      if (
         targetCollectionId &&
         !isTrashCollectionId(targetCollectionId, req.user.id)
       ) {
@@ -149,7 +156,7 @@ export const registerDrawingCreateUpdateRoutes = (
           return res.status(404).json({ error: "Collection not found" });
 
         // If the collection belongs to someone else, check the user has editor access
-        if (collection.userId !== req.user.id) {
+        if (collection.userId !== req.user.id && !isInstanceAdmin(req.user)) {
           const share = await prisma.collectionShare.findFirst({
             where: {
               collectionId: targetCollectionId,
@@ -458,8 +465,16 @@ export const registerDrawingCreateUpdateRoutes = (
           (data as Prisma.DrawingUncheckedUpdateInput).collectionId =
             trashCollectionId;
         } else if (payload.collectionId) {
+          if (payload.collectionId.startsWith("trash:"))
+            return res.status(404).json({ error: "Collection not found" });
           const ownedCollection = await prisma.collection.findFirst({
-            where: { id: payload.collectionId, userId: actingUserId },
+            where: {
+              id: payload.collectionId,
+              NOT: { id: { startsWith: "trash:" } },
+              ...(principal?.kind === "user" && principal.instanceAdmin
+                ? {}
+                : { userId: actingUserId }),
+            },
           });
           if (!ownedCollection) {
             const editableShare = await prisma.collectionShare.findFirst({

@@ -1,3 +1,4 @@
+import { manageableOwner } from "../../authz/sharing";
 import express from "express";
 import { v4 as uuidv4 } from "uuid";
 import { rewritePreviewForInternedFiles } from "../../fileProcessing";
@@ -33,7 +34,7 @@ export const registerDrawingDeleteDuplicateRoutes = (
       const { id } = req.params;
 
       const drawing = await prisma.drawing.findFirst({
-        where: { id, userId: req.user.id },
+        where: { id, ...manageableOwner(req.user) },
       });
       if (!drawing) return res.status(404).json({ error: "Drawing not found" });
 
@@ -44,7 +45,7 @@ export const registerDrawingDeleteDuplicateRoutes = (
       // storage leak). Doing S3 first means a failure aborts before the row
       // is removed, so the user can simply retry the delete.
       try {
-        await cleanupS3FilesForDrawing(id, req.user.id);
+        await cleanupS3FilesForDrawing(id, drawing.userId);
       } catch (error) {
         console.warn("[s3] Failed to cleanup deleted drawing files", {
           drawingId: id,
@@ -53,7 +54,7 @@ export const registerDrawingDeleteDuplicateRoutes = (
       }
 
       const deleteResult = await prisma.drawing.deleteMany({
-        where: { id, userId: req.user.id },
+        where: { id, userId: drawing.userId },
       });
       if (deleteResult.count === 0) {
         return res.status(404).json({ error: "Drawing not found" });
@@ -88,12 +89,12 @@ export const registerDrawingDeleteDuplicateRoutes = (
 
       const { id } = req.params;
       const original = await prisma.drawing.findFirst({
-        where: { id, userId: req.user.id },
+        where: { id, ...manageableOwner(req.user) },
       });
       if (!original)
         return res.status(404).json({ error: "Original drawing not found" });
       let duplicatedCollectionId = original.collectionId;
-      if (isTrashCollectionId(original.collectionId, req.user.id)) {
+      if (isTrashCollectionId(original.collectionId, original.userId)) {
         await ensureTrashCollection(prisma, req.user.id);
         duplicatedCollectionId = getUserTrashCollectionId(req.user.id);
       }

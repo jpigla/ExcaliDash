@@ -121,11 +121,25 @@ model Drawing {
   linkShares   DrawingLinkShare[]
   snapshots    DrawingSnapshot[]
   agentKeys    ApiKey[]
+  mcpGrants    McpBoardGrant[]
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
   @@index([userId, updatedAt])
   @@index([userId, collectionId, updatedAt])
+}
+
+model McpBoardGrant {
+  drawingId   String
+  drawing     Drawing  @relation(fields: [drawingId], references: [id], onDelete: Cascade)
+  agentId     String
+  agentUserId String
+  ownerId     String
+  mode        String
+  expiresAt   DateTime
+
+  @@id([drawingId, agentId])
+  @@index([agentId, agentUserId, ownerId, expiresAt])
 }
 
 model DrawingSnapshot {

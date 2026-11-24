@@ -1,9 +1,10 @@
+import { isInstanceAdmin, manageableOwner } from "../../authz/sharing";
 import express from "express";
 import { z } from "zod";
 import { Prisma } from "../../generated/client";
 import { shareUserFields } from "./profileAvatars";
 import { DashboardRouteDeps } from "./types";
-import { getUserTrashCollectionId, isTrashCollectionId } from "./trash";
+import { getUserTrashCollectionId } from "./trash";
 
 const parentCollectionIdSchema = z
   .string()
@@ -29,7 +30,7 @@ export const registerCollectionRoutes = (
     logAuditEvent,
   } = deps;
 
-  // GET /collections — returns owned collections + collections shared with user
+  // GET /collections — lists collections available in the current session.
   app.get(
     "/collections",
     requireAuth,
@@ -38,8 +39,16 @@ export const registerCollectionRoutes = (
       const trashCollectionId = getUserTrashCollectionId(req.user.id);
       await ensureTrashCollection(prisma, req.user.id);
 
+      const admin = isInstanceAdmin(req.user);
       const rawCollections = await prisma.collection.findMany({
-        where: { userId: req.user.id },
+        where: admin
+          ? {
+              OR: [
+                { id: trashCollectionId },
+                { NOT: { id: { startsWith: "trash:" } } },
+              ],
+            }
+          : { userId: req.user.id },
         orderBy: { createdAt: "desc" },
       });
       const hasInternalTrash = rawCollections.some(
@@ -77,6 +86,8 @@ export const registerCollectionRoutes = (
                 isShared: sharedCollectionIds.has(c.id),
               },
         );
+
+      if (admin) return res.json(ownedCollections);
 
       // Collections shared with this user by others
       const sharedEntries = await prisma.collectionShare.findMany({
@@ -130,20 +141,21 @@ export const registerCollectionRoutes = (
 
       const userId = req.user.id;
       const parentId = parent.data;
+      const admin = isInstanceAdmin(req.user);
       const data = { name: sanitizeText(parsed.data, 100), userId, parentId };
       try {
         const newCollection =
           parentId === null
             ? await prisma.collection.create({ data })
             : await prisma.$transaction(async (tx) => {
-                // The insert locks the referenced key until ownership is checked.
-                const collection = await tx.collection.create({ data });
                 const ownedParent = await tx.collection.findFirst({
-                  where: { id: parentId, userId },
-                  select: { id: true },
+                  where: { id: parentId, ...(admin ? {} : { userId }) },
+                  select: { userId: true },
                 });
                 if (!ownedParent) throw new ParentCollectionNotFound();
-                return collection;
+                return tx.collection.create({
+                  data: { ...data, userId: ownedParent.userId },
+                });
               });
         return res.json({ ...newCollection, sharedRole: null, isOwner: true });
       } catch (error) {
@@ -160,7 +172,7 @@ export const registerCollectionRoutes = (
     }),
   );
 
-  // PUT /collections/:id — owner only
+  // PUT /collections/:id
   app.put(
     "/collections/:id",
     requireAuth,
@@ -168,14 +180,18 @@ export const registerCollectionRoutes = (
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
 
       const { id } = req.params;
-      if (isTrashCollectionId(id, req.user.id)) {
+      if (id === "trash" || id.startsWith("trash:")) {
         return res.status(400).json({
           error: "Validation error",
           message: "Trash collection cannot be renamed",
         });
       }
       const existing = await prisma.collection.findFirst({
-        where: { id, userId: req.user.id },
+        where: {
+          id,
+          NOT: [{ id: "trash" }, { id: { startsWith: "trash:" } }],
+          ...manageableOwner(req.user),
+        },
       });
       if (!existing)
         return res.status(404).json({ error: "Collection not found" });
@@ -190,11 +206,19 @@ export const registerCollectionRoutes = (
 
       const sanitizedName = sanitizeText(parsed.data, 100);
       await prisma.collection.updateMany({
-        where: { id, userId: req.user.id },
+        where: {
+          id,
+          NOT: [{ id: "trash" }, { id: { startsWith: "trash:" } }],
+          ...manageableOwner(req.user),
+        },
         data: { name: sanitizedName },
       });
       const updated = await prisma.collection.findFirst({
-        where: { id, userId: req.user.id },
+        where: {
+          id,
+          NOT: [{ id: "trash" }, { id: { startsWith: "trash:" } }],
+          ...manageableOwner(req.user),
+        },
       });
       if (!updated)
         return res.status(404).json({ error: "Collection not found" });
@@ -202,7 +226,7 @@ export const registerCollectionRoutes = (
     }),
   );
 
-  // DELETE /collections/:id — owner only
+  // DELETE /collections/:id
   app.delete(
     "/collections/:id",
     requireAuth,
@@ -210,25 +234,31 @@ export const registerCollectionRoutes = (
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
 
       const { id } = req.params;
-      if (isTrashCollectionId(id, req.user.id)) {
+      if (id === "trash" || id.startsWith("trash:")) {
         return res.status(400).json({
           error: "Validation error",
           message: "Trash collection cannot be deleted",
         });
       }
       const collection = await prisma.collection.findFirst({
-        where: { id, userId: req.user.id },
+        where: {
+          id,
+          NOT: [{ id: "trash" }, { id: { startsWith: "trash:" } }],
+          ...manageableOwner(req.user),
+        },
       });
       if (!collection)
         return res.status(404).json({ error: "Collection not found" });
 
       await prisma.$transaction([
         prisma.drawing.updateMany({
-          where: { collectionId: id, userId: req.user.id },
+          where: { collectionId: id },
           data: { collectionId: null },
         }),
         prisma.collectionShare.deleteMany({ where: { collectionId: id } }),
-        prisma.collection.deleteMany({ where: { id, userId: req.user.id } }),
+        prisma.collection.deleteMany({
+          where: { id, ...manageableOwner(req.user) },
+        }),
       ]);
       invalidateDrawingsCache();
 
@@ -249,7 +279,7 @@ export const registerCollectionRoutes = (
 
   // ─── Collection Sharing ───────────────────────────────────────────────────
 
-  // GET /collections/:id/shares — list shares (owner only)
+  // GET /collections/:id/shares — list shares
   app.get(
     "/collections/:id/shares",
     requireAuth,
@@ -258,7 +288,11 @@ export const registerCollectionRoutes = (
       const { id } = req.params;
 
       const collection = await prisma.collection.findFirst({
-        where: { id, userId: req.user.id },
+        where: {
+          id,
+          NOT: [{ id: "trash" }, { id: { startsWith: "trash:" } }],
+          ...manageableOwner(req.user),
+        },
       });
       if (!collection)
         return res.status(404).json({ error: "Collection not found" });
@@ -275,7 +309,7 @@ export const registerCollectionRoutes = (
     }),
   );
 
-  // POST /collections/:id/shares — add or update a user share (owner only)
+  // POST /collections/:id/shares — add or update a user share
   app.post(
     "/collections/:id/shares",
     requireAuth,
@@ -294,7 +328,11 @@ export const registerCollectionRoutes = (
       }
 
       const collection = await prisma.collection.findFirst({
-        where: { id, userId: req.user.id },
+        where: {
+          id,
+          NOT: [{ id: "trash" }, { id: { startsWith: "trash:" } }],
+          ...manageableOwner(req.user),
+        },
       });
       if (!collection)
         return res.status(404).json({ error: "Collection not found" });
@@ -312,7 +350,7 @@ export const registerCollectionRoutes = (
         select: { id: true, name: true, email: true },
       });
       if (!grantee) return res.status(404).json({ error: "User not found" });
-      if (grantee.id === req.user.id)
+      if (grantee.id === collection.userId)
         return res.status(400).json({ error: "Cannot share with yourself" });
 
       const share = await prisma.collectionShare.upsert({
@@ -339,7 +377,7 @@ export const registerCollectionRoutes = (
     }),
   );
 
-  // PATCH /collections/:id/shares/:userId — update role (owner only)
+  // PATCH /collections/:id/shares/:userId — update role
   app.patch(
     "/collections/:id/shares/:userId",
     requireAuth,
@@ -353,7 +391,11 @@ export const registerCollectionRoutes = (
       }
 
       const collection = await prisma.collection.findFirst({
-        where: { id, userId: req.user.id },
+        where: {
+          id,
+          NOT: [{ id: "trash" }, { id: { startsWith: "trash:" } }],
+          ...manageableOwner(req.user),
+        },
       });
       if (!collection)
         return res.status(404).json({ error: "Collection not found" });
@@ -370,7 +412,7 @@ export const registerCollectionRoutes = (
     }),
   );
 
-  // DELETE /collections/:id/shares/:userId — remove a user (owner only)
+  // DELETE /collections/:id/shares/:userId — remove a user
   app.delete(
     "/collections/:id/shares/:userId",
     requireAuth,
@@ -379,7 +421,11 @@ export const registerCollectionRoutes = (
       const { id, userId } = req.params;
 
       const collection = await prisma.collection.findFirst({
-        where: { id, userId: req.user.id },
+        where: {
+          id,
+          NOT: [{ id: "trash" }, { id: { startsWith: "trash:" } }],
+          ...manageableOwner(req.user),
+        },
       });
       if (!collection)
         return res.status(404).json({ error: "Collection not found" });
@@ -392,7 +438,7 @@ export const registerCollectionRoutes = (
     }),
   );
 
-  // GET /collections/:id/share-resolve — search users to share with (owner only)
+  // GET /collections/:id/share-resolve — search users to share with
   app.get(
     "/collections/:id/share-resolve",
     requireAuth,
@@ -404,7 +450,11 @@ export const registerCollectionRoutes = (
       if (q.length < 2) return res.json({ users: [] });
 
       const collection = await prisma.collection.findFirst({
-        where: { id, userId: req.user.id },
+        where: {
+          id,
+          NOT: [{ id: "trash" }, { id: { startsWith: "trash:" } }],
+          ...manageableOwner(req.user),
+        },
       });
       if (!collection)
         return res.status(404).json({ error: "Collection not found" });
@@ -414,7 +464,10 @@ export const registerCollectionRoutes = (
         where: { collectionId: id },
         select: { granteeUserId: true },
       });
-      const excludeIds = [req.user.id, ...existing.map((s) => s.granteeUserId)];
+      const excludeIds = [
+        collection.userId,
+        ...existing.map((s) => s.granteeUserId),
+      ];
 
       const users = await prisma.user.findMany({
         where: {

@@ -232,6 +232,31 @@ export const resolveShareUsers = async (
   return response.data.users;
 };
 
+export type CodexBoardAccess =
+  | { agent: null }
+  | {
+      agent: string;
+      grant: { mode: "read" | "edit"; expiresAt: string } | null;
+      lastEditAt: string | null;
+    };
+
+const codexAccessPath = (id: string) =>
+  `/drawings/${encodeURIComponent(id)}/codex-access`;
+
+export const getCodexBoardAccess = async (id: string, signal: AbortSignal) =>
+  (await api.get<CodexBoardAccess>(codexAccessPath(id), { signal })).data;
+
+export const grantCodexBoardAccess = async (
+  id: string,
+  mode: "read" | "edit",
+  minutes: number,
+) =>
+  (await api.put<CodexBoardAccess>(codexAccessPath(id), { mode, minutes }))
+    .data;
+
+export const revokeCodexBoardAccess = async (id: string) =>
+  (await api.delete<CodexBoardAccess>(codexAccessPath(id))).data;
+
 export type DrawingPermissionRow = {
   id: string;
   granteeUserId: string;

@@ -8,7 +8,46 @@ export type DrawingPermission = "view" | "edit";
 export type DrawingAccess = "none" | DrawingPermission | "owner";
 
 export type DrawingPrincipal =
-  { kind: "user"; userId: string } | GuestPrincipal;
+  { kind: "user"; userId: string; instanceAdmin?: boolean } | GuestPrincipal;
+
+type SessionUser = {
+  id: string;
+  role: string;
+  authCredentialType?: string;
+  impersonatorId?: string;
+};
+
+export const isInstanceAdmin = (user?: SessionUser): boolean =>
+  user?.role === "ADMIN" &&
+  user.authCredentialType === "jwt" &&
+  !user.impersonatorId;
+
+export const sessionDrawingPrincipal = (
+  user: SessionUser,
+): DrawingPrincipal => ({
+  kind: "user",
+  userId: user.id,
+  instanceAdmin: isInstanceAdmin(user),
+});
+
+export const manageableOwner = (user: SessionUser) =>
+  isInstanceAdmin(user) ? {} : { userId: user.id };
+
+export const isCurrentInstanceAdmin = async (
+  db: Prisma.TransactionClient,
+  userId: string,
+): Promise<boolean> =>
+  Boolean(
+    await db.user.findFirst({
+      where: {
+        id: userId,
+        role: "ADMIN",
+        isActive: true,
+        mustResetPassword: false,
+      },
+      select: { id: true },
+    }),
+  );
 
 export const normalizeDrawingPermission = (
   input: unknown,
@@ -71,6 +110,11 @@ export const getDrawingAccess = async (params: {
     });
     if (!drawing) return "none";
     if (drawing.userId === params.principal.userId) return "owner";
+    if (
+      principal.instanceAdmin &&
+      (await isCurrentInstanceAdmin(prisma, principal.userId))
+    )
+      return "owner";
 
     const perm = await params.prisma.drawingPermission.findUnique({
       where: {

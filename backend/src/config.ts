@@ -83,6 +83,7 @@ interface Config {
   csrfSecret: string | null;
   debugCsrf: boolean;
   apiKeyHashPepper: string;
+  mcpPolicyFile: string | null;
   oidc: OidcConfig;
   enablePasswordReset: boolean;
   enableRefreshTokenRotation: boolean;
@@ -359,6 +360,7 @@ export const config: Config = {
   fileUploadMaxBytes: fileUploadMaxMb * 1024 * 1024,
   csrfSecret: readRaw("CSRF_SECRET") || null,
   debugCsrf: readRaw("DEBUG_CSRF") === "true",
+  mcpPolicyFile: readOptionalString("MCP_POLICY_FILE"),
   apiKeyHashPepper: readRaw("API_KEY_HASH_PEPPER") || "api-key-hash-pepper",
   oidc: resolveOidcConfig(resolvedAuthMode),
   enablePasswordReset: readBoolean("ENABLE_PASSWORD_RESET", false),

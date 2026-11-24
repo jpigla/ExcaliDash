@@ -31,6 +31,7 @@ import {
   canViewDrawing,
   canEditDrawing,
   getDrawingAccess,
+  sessionDrawingPrincipal,
   type DrawingPrincipal,
 } from "../authz/sharing";
 import { isGuestRequest, readGuestRequest } from "../authz/guestLinkSecurity";
@@ -73,7 +74,7 @@ export const registerFileRoutes = (
     if (isGuestRequest(req)) {
       return readGuestRequest(req, config.jwtSecret);
     }
-    return req.user?.id ? { kind: "user", userId: req.user.id } : null;
+    return req.user ? sessionDrawingPrincipal(req.user) : null;
   };
 
   const authenticateFileRequest =

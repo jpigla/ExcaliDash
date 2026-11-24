@@ -10,7 +10,10 @@ import {
   isS3Enabled,
   listS3Objects,
 } from "../../s3";
-import { type DrawingPrincipal } from "../../authz/sharing";
+import {
+  sessionDrawingPrincipal,
+  type DrawingPrincipal,
+} from "../../authz/sharing";
 import {
   isGuestRequest,
   readGuestRequest,
@@ -49,7 +52,7 @@ export const createDrawingRouteContext = (
     if (isGuestRequest(req)) {
       return readGuestRequest(req, config.jwtSecret);
     }
-    if (req.user?.id) return { kind: "user", userId: req.user.id };
+    if (req.user) return sessionDrawingPrincipal(req.user);
     return null;
   };
 

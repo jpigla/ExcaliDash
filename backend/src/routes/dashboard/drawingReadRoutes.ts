@@ -68,15 +68,14 @@ export const registerDrawingReadRoutes = (
         );
       }
 
-      const isOwner =
-        principal?.kind === "user" && principal.userId === drawing.userId;
       return res.json({
         ...drawing,
         // Collections (and trash mapping) are owner-scoped. For shared/public access, avoid leaking
         // owner collection ids like `trash:<ownerId>` and avoid implying the viewer can organize it.
-        collectionId: isOwner
-          ? toPublicTrashCollectionId(drawing.collectionId, drawing.userId)
-          : null,
+        collectionId:
+          access === "owner"
+            ? toPublicTrashCollectionId(drawing.collectionId, drawing.userId)
+            : null,
         elements: parseJsonField(drawing.elements, []),
         appState: parseJsonField(drawing.appState, {}),
         files: parseJsonField(drawing.files, {}),

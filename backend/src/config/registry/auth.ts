@@ -33,6 +33,12 @@ export const authEnv: readonly EnvVarSpec[] = [
     doc: "Refresh-token lifetime (vercel/ms style duration).",
   },
   {
+    name: "MCP_POLICY_FILE",
+    group: "Authentication",
+    kind: "string",
+    doc: "Absolute path to the optional ExcaliDash agent MCP policy file. Leave unset to disable MCP.",
+  },
+  {
     name: "ENABLE_PASSWORD_RESET",
     group: "Authentication",
     kind: "boolean",

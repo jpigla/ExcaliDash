@@ -62,7 +62,7 @@ RUN rm -rf /usr/local/lib/node_modules/npm /opt/yarn-* && \
 
 # Install runtime packages and create non-root user
 RUN apk upgrade --no-cache && \
-    apk add --no-cache openssl su-exec && \
+    apk add --no-cache openssl su-exec font-dejavu && \
     addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001
 

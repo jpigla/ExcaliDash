@@ -29,6 +29,8 @@ import { errorHandler, asyncHandler } from "./middleware/errorHandler";
 import authRouter from "./auth";
 import { AVATAR_PATH } from "./auth/accountAvatarRoutes";
 import { logAuditEvent } from "./utils/audit";
+import { registerMcp } from "./mcp";
+import { registerManagedMcpGrants } from "./mcp/managedGrants";
 import { registerDashboardRoutes } from "./routes/dashboard";
 import { registerImportExportRoutes } from "./routes/importExport";
 import { registerSystemRoutes } from "./routes/system";
@@ -294,6 +296,17 @@ app.use(
     exposedHeaders: ["x-csrf-token", "x-request-id"],
   }),
 );
+if (config.mcpPolicyFile && config.authMode !== "disabled") {
+  registerMcp(app, {
+    policyFile: config.mcpPolicyFile,
+    context: {
+      prisma,
+      invalidateDrawingsCache,
+      emitDrawingScene: (id, payload) =>
+        socketHandlers.emitDrawingScene(id, payload),
+    },
+  });
+}
 const parseRequestBody = express
   .Router()
   .use(
@@ -605,6 +618,13 @@ if (enableOnboardingGate) {
   });
 }
 registerSystemRoutes(app, { asyncHandler, getBackendVersion });
+if (config.mcpPolicyFile && config.authMode !== "disabled") {
+  registerManagedMcpGrants(app, config.mcpPolicyFile, {
+    prisma,
+    requireAuth,
+    asyncHandler,
+  });
+}
 registerDashboardRoutes(app, {
   prisma,
   requireAuth,

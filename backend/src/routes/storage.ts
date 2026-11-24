@@ -5,6 +5,7 @@
  *   DELETE /drawings/:id/files/orphans – delete selected orphaned files
  */
 import express from "express";
+import { manageableOwner } from "../authz/sharing";
 import type { Server as SocketIoServer } from "socket.io";
 import { PrismaClient } from "../generated/client";
 import {
@@ -79,15 +80,15 @@ export const registerStorageRoutes = (
     "/drawings/:id/trim",
     requireAuth,
     asyncHandler(async (req, res) => {
-      const userId = req.user?.id;
-      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const user = req.user;
+      if (!user) return res.status(401).json({ error: "Unauthorized" });
 
       const { id } = req.params;
       const { confirmName } = req.body ?? {};
 
-      // 1. Find drawing owned by user
+      // Find a drawing the current account can manage.
       const drawing = await prisma.drawing.findFirst({
-        where: { id, userId },
+        where: { id, ...manageableOwner(user) },
       });
       if (!drawing) {
         return res.status(404).json({ error: "Drawing not found" });
@@ -198,13 +199,13 @@ export const registerStorageRoutes = (
     "/drawings/:id/files/diff",
     requireAuth,
     asyncHandler(async (req, res) => {
-      const userId = req.user?.id;
-      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const user = req.user;
+      if (!user) return res.status(401).json({ error: "Unauthorized" });
 
       const { id } = req.params;
 
       const drawing = await prisma.drawing.findFirst({
-        where: { id, userId },
+        where: { id, ...manageableOwner(user) },
       });
       if (!drawing) {
         return res.status(404).json({ error: "Drawing not found" });
@@ -224,7 +225,7 @@ export const registerStorageRoutes = (
           },
         });
       const s3Objects: S3ObjectRecord[] = isS3Enabled()
-        ? await listS3Objects(drawingS3Prefix(userId, id))
+        ? await listS3Objects(drawingS3Prefix(drawing.userId, id))
         : [];
 
       const diffResponse = buildFilesDiffResponse({
@@ -245,8 +246,8 @@ export const registerStorageRoutes = (
     "/drawings/:id/files/orphans",
     requireAuth,
     asyncHandler(async (req, res) => {
-      const userId = req.user?.id;
-      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const user = req.user;
+      if (!user) return res.status(401).json({ error: "Unauthorized" });
 
       const { id } = req.params;
       const { confirmName, fileIds: rawFileIds } = req.body ?? {};
@@ -273,7 +274,7 @@ export const registerStorageRoutes = (
       const fileIds = rawFileIds as string[];
 
       const drawing = await prisma.drawing.findFirst({
-        where: { id, userId },
+        where: { id, ...manageableOwner(user) },
       });
       if (!drawing) {
         return res.status(404).json({ error: "Drawing not found" });

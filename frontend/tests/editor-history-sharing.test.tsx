@@ -48,6 +48,7 @@ vi.mock("../src/api", () => ({
   getDrawingHistory: vi.fn(),
   getDrawingSnapshot: vi.fn(),
   getDrawingSharing: vi.fn(async () => ({ permissions: [], linkShares: [] })),
+  getCodexBoardAccess: vi.fn(async () => ({ agent: null })),
   isAxiosError: () => false,
 }));
 vi.mock("../src/utils/imageCompression", () => ({

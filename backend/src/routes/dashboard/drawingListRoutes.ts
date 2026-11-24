@@ -4,6 +4,7 @@ import { Prisma } from "../../generated/client";
 import {
   canViewDrawing,
   getDrawingAccess,
+  isInstanceAdmin,
   normalizeDrawingPermission,
 } from "../../authz/sharing";
 import { getUserTrashCollectionId, toPublicTrashCollectionId } from "./trash";
@@ -63,7 +64,10 @@ export const registerDrawingListRoutes = (
         sortField,
         sortDirection,
       } = req.query;
-      const where: Prisma.DrawingWhereInput = { userId: req.user.id };
+      const admin = isInstanceAdmin(req.user);
+      const where: Prisma.DrawingWhereInput = admin
+        ? {}
+        : { userId: req.user.id };
       const searchTerm =
         typeof search === "string" && search.trim().length > 0
           ? search.trim()
@@ -80,7 +84,12 @@ export const registerDrawingListRoutes = (
       } else if (collectionId) {
         const normalizedCollectionId = String(collectionId);
         if (normalizedCollectionId === "trash") {
-          where.collectionId = { in: [trashCollectionId, "trash"] };
+          if (admin)
+            where.OR = [
+              { collectionId: "trash" },
+              { collectionId: { startsWith: "trash:" } },
+            ];
+          else where.collectionId = { in: [trashCollectionId, "trash"] };
           collectionFilterKey = "trash";
         } else {
           const collection = await prisma.collection.findFirst({
@@ -92,7 +101,7 @@ export const registerDrawingListRoutes = (
 
           // Check if user is owner or has a share entry
           const isOwner = collection.userId === req.user.id;
-          if (!isOwner) {
+          if (!isOwner && !admin) {
             const share = await prisma.collectionShare.findFirst({
               where: {
                 collectionId: normalizedCollectionId,
@@ -111,7 +120,14 @@ export const registerDrawingListRoutes = (
         }
       } else {
         where.OR = [
-          { collectionId: { notIn: [trashCollectionId, "trash"] } },
+          admin
+            ? {
+                AND: [
+                  { collectionId: { not: "trash" } },
+                  { NOT: { collectionId: { startsWith: "trash:" } } },
+                ],
+              }
+            : { collectionId: { notIn: [trashCollectionId, "trash"] } },
           { collectionId: null },
         ];
       }
@@ -140,7 +156,9 @@ export const registerDrawingListRoutes = (
         buildDrawingsCacheKey({
           userId: req.user.id,
           searchTerm: searchTerm ?? "",
-          collectionFilter: collectionFilterKey,
+          collectionFilter: admin
+            ? `admin:${collectionFilterKey}`
+            : collectionFilterKey,
           includeData: shouldIncludeData,
           sortField: parsedSortField,
           sortDirection: parsedSortDirection,
@@ -194,7 +212,10 @@ export const registerDrawingListRoutes = (
       if (shouldIncludeData) {
         responsePayload = (drawings as any[]).map((d: any) => ({
           ...d,
-          collectionId: toPublicTrashCollectionId(d.collectionId, req.user!.id),
+          collectionId: toPublicTrashCollectionId(
+            d.collectionId,
+            admin ? d.userId : req.user!.id,
+          ),
           elements: parseJsonField(d.elements, []),
           appState: parseJsonField(d.appState, {}),
           files: parseJsonField(d.files, {}),
@@ -204,7 +225,10 @@ export const registerDrawingListRoutes = (
       } else {
         responsePayload = (drawings as any[]).map((d: any) => ({
           ...d,
-          collectionId: toPublicTrashCollectionId(d.collectionId, req.user!.id),
+          collectionId: toPublicTrashCollectionId(
+            d.collectionId,
+            admin ? d.userId : req.user!.id,
+          ),
           creatorName: d.user?.name ?? null,
           user: undefined,
         }));

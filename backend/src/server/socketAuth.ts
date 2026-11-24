@@ -9,6 +9,7 @@ import {
 
 export type SocketAuth = {
   userId: string;
+  instanceAdmin?: boolean;
   // Set only for API key connections; JWT and bootstrap sessions are not
   // limited by scopes.
   apiKeyScopes: string[] | null;
@@ -106,11 +107,22 @@ export const createSocketAuthResolver = ({
 
       const user = await prisma.user.findUnique({
         where: { id: decoded.userId },
-        select: { id: true, isActive: true },
+        select: {
+          id: true,
+          isActive: true,
+          role: true,
+          mustResetPassword: true,
+        },
       });
 
-      if (!user || !user.isActive) return null;
-      return { userId: user.id, apiKeyScopes: null, apiKeyId: null };
+      if (!user || !user.isActive || user.mustResetPassword) return null;
+      return {
+        userId: user.id,
+        apiKeyScopes: null,
+        apiKeyId: null,
+        ...(user.role === "ADMIN" &&
+          !decoded.impersonatorId && { instanceAdmin: true }),
+      };
     } catch {
       return null;
     }

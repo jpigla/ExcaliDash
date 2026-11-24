@@ -253,7 +253,11 @@ export const registerSocketHandlers = ({
         : await resolveSocketAuth(tokenFromCookie, { allowApiKey: false });
 
       if (auth) {
-        state.principal = { kind: "user", userId: auth.userId };
+        state.principal = {
+          kind: "user",
+          userId: auth.userId,
+          instanceAdmin: auth.instanceAdmin,
+        };
         state.apiKeyScopes = auth.apiKeyScopes;
         state.apiKeyId = auth.apiKeyId;
         return next();

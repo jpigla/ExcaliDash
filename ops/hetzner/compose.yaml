@@ -20,9 +20,20 @@ services:
         bind:
           create_host_path: false
       - ./guard.cjs:/app/guard.cjs:ro
-    entrypoint: ["/bin/sh", "-ec", "node /app/guard.cjs && exec /app/docker-entrypoint.sh"]
+    entrypoint:
+      [
+        "/bin/sh",
+        "-ec",
+        "node /app/guard.cjs && exec /app/docker-entrypoint.sh",
+      ]
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
       interval: 10s
       timeout: 5s
       retries: 12

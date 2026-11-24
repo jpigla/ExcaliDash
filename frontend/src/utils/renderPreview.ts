@@ -85,7 +85,10 @@ export const renderPreviewSvg = async (
   args: RenderPreviewArgs,
   serializeVector?: (svg: SVGSVGElement) => string,
 ): Promise<string> => {
-  args = { ...args, elements: args.elements.filter((element) => element && !element.isDeleted) };
+  args = {
+    ...args,
+    elements: args.elements.filter((element) => element && !element.isDeleted),
+  };
   const generation = previewThumbnailGeneration();
   const hasImages = args.elements.some(
     (el) => el?.type === "image" && !el.isDeleted,

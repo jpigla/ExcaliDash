@@ -35,6 +35,8 @@ extends board sharing, account profiles, and editor navigation.
   preview fits the visible drawing.
 - **Editor toolbar.** With auto-hide enabled, the top bar stays visible while
   the pointer is over it. Move to the top edge to bring it back.
+- **Agent access over MCP.** Optional scoped access to create, draw, inspect,
+  and edit persistent boards. See the [MCP setup guide](docs/guide/mcp.md).
 - **Security fixes.** ZIP imports enforce size limits during decompression,
   stale OIDC sessions cannot restore revoked admin rights, and
   `follow-redirects` is updated to 1.16.3.

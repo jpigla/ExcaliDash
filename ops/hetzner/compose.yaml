@@ -1,0 +1,38 @@
+services:
+  backend:
+    image: excalidash-fork-backend:${EXCALIDASH_REV:?Set EXCALIDASH_REV in .env}
+    init: true
+    restart: unless-stopped
+    env_file: ./state/secrets.env
+    environment:
+      DATABASE_PROVIDER: sqlite
+      DATABASE_URL: file:/app/prisma/dev.db
+      PORT: "8000"
+      NODE_ENV: production
+      AUTH_MODE: local
+      FRONTEND_URL: ${EXCALIDASH_ORIGIN:?Set EXCALIDASH_ORIGIN in .env}
+      TRUST_PROXY: "2"
+      RUN_MIGRATIONS: "true"
+    volumes:
+      - type: bind
+        source: ./state/db
+        target: /app/prisma
+        bind:
+          create_host_path: false
+      - ./guard.cjs:/app/guard.cjs:ro
+    entrypoint: ["/bin/sh", "-ec", "node /app/guard.cjs && exec /app/docker-entrypoint.sh"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+  frontend:
+    image: excalidash-fork-frontend:${EXCALIDASH_REV:?Set EXCALIDASH_REV in .env}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${EXCALIDASH_PORT:-16767}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      BACKEND_URL: backend:8000

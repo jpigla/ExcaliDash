@@ -1,0 +1,10 @@
+[Unit]
+Description=Encrypted ExcaliDash backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/excalidash
+UMask=0077
+ExecStart=/opt/excalidash/backup-daily.sh

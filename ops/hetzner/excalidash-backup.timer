@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily ExcaliDash backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 Europe/Berlin
+Persistent=true
+
+[Install]
+WantedBy=timers.target

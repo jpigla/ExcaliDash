@@ -1,0 +1,7 @@
+services:
+  backend:
+    environment:
+      UPDATE_CHECK_OUTBOUND: "false"
+networks:
+  default:
+    internal: true

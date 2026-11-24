@@ -1,0 +1,11 @@
+services:
+  backend:
+    environment:
+      MCP_POLICY_FILE: /run/excalidash-mcp/policy.json
+    volumes:
+      - type: bind
+        source: ./state/mcp
+        target: /run/excalidash-mcp
+        read_only: true
+        bind:
+          create_host_path: false

@@ -1,0 +1,11 @@
+.env
+compose.mcp.yaml
+state/
+.restore.*
+.init.*
+*.cms
+*.key
+*.pem
+recovery/
+backup-config/
+*.pass

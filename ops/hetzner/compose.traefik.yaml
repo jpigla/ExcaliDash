@@ -1,0 +1,17 @@
+services:
+  frontend:
+    ports: !reset []
+    networks:
+      - default
+      - web
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: web
+      traefik.http.routers.excalidash.rule: Host(`${EXCALIDASH_HOST:?Set EXCALIDASH_HOST in .env}`)
+      traefik.http.routers.excalidash.entrypoints: websecure
+      traefik.http.routers.excalidash.tls.certresolver: le
+      traefik.http.services.excalidash.loadbalancer.server.port: "8080"
+
+networks:
+  web:
+    external: true

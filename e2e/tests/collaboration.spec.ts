@@ -159,11 +159,17 @@ test.describe("Real-time collaboration", () => {
         .locator("canvas.excalidraw__canvas.interactive")
         .boundingBox();
       if (!box) throw new Error("Canvas not found");
-      await page1.mouse.move(box.x + 400, box.y + 300);
-      await expect.poll(pointers).toHaveLength(1);
+      await page1.bringToFront();
+      // Cursor events are throttled and relayed without retransmission.
+      // Keep moving the mouse while waiting for the receiving editor to update.
+      let moves = 0;
+      const moveAndRead = async (x: number, y: number) => {
+        await page1.mouse.move(box.x + x + (moves++ % 10), box.y + y);
+        return pointers();
+      };
+      await expect.poll(() => moveAndRead(400, 300)).toHaveLength(1);
       const before = await pointers();
-      await page1.mouse.move(box.x + 500, box.y + 400);
-      await expect.poll(pointers).not.toEqual(before);
+      await expect.poll(() => moveAndRead(500, 400)).not.toEqual(before);
       await expect.poll(pointers).toEqual([
         expect.objectContaining({
           x: expect.any(Number),

@@ -18,13 +18,19 @@ const fontCatalog = JSON.parse(
   ),
 );
 // The optimizer otherwise reuses its cached bundles after a patch-only edit.
+const runsModule = path.resolve(__dirname, "src/utils/boardTextRuns.ts");
 const typographyRevision = createHash("sha256")
   .update(fs.readFileSync(path.resolve(__dirname, "excalidrawTypography.ts")))
   .update(fs.readFileSync(path.resolve(__dirname, "excalidrawZoom.ts")))
+  .update(fs.readFileSync(runsModule))
   .update(JSON.stringify(fontCatalog))
   .digest("hex")
   .slice(0, 12);
-const typography = excalidrawTypography(fontCatalog, typographyRevision);
+const typography = excalidrawTypography(
+  fontCatalog,
+  typographyRevision,
+  runsModule,
+);
 
 const versionFilePath = path.resolve(__dirname, "../VERSION");
 const appVersion = fs.readFileSync(versionFilePath, "utf8").trim();

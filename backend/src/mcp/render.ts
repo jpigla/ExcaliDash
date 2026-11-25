@@ -5,6 +5,8 @@ import {
   boardFontById,
   boardFontFiles,
   textFormattingSchema,
+  textRunsSchema,
+  styledTextLines,
 } from "../textFormatting";
 
 const escape = (value: string) =>
@@ -94,6 +96,36 @@ function draw(element: Element): string {
     const bold = syntheticBold
       ? ` stroke="${stroke}" stroke-width="${fontSize / 30}"`
       : "";
+    const rich = textRunsSchema.safeParse(element.textRuns);
+    if (
+      rich.success &&
+      rich.data.length &&
+      typeof element.originalText === "string"
+    ) {
+      return styledTextLines(lines.join("\n"), element.originalText, rich.data)
+        .map((pieces, index) => {
+          const body = pieces
+            .map((piece) => {
+              const run = { ...format, ...piece.style };
+              const weight =
+                run.weight === 300 && !font?.weights.includes(300)
+                  ? 400
+                  : (run.weight ?? 400);
+              const decoration = [
+                run.underline && "underline",
+                run.strikethrough && "line-through",
+              ]
+                .filter(Boolean)
+                .join(" ");
+              const synth =
+                weight === 700 && font && !font.weights.includes(700);
+              return `<tspan font-weight="${synth ? 400 : weight}" font-style="${run.italic ? "italic" : "normal"}"${decoration ? ` text-decoration="${decoration}"` : ""}${synth ? ` stroke="${stroke}" stroke-width="${fontSize / 30}"` : ""}>${escape(piece.text)}</tspan>`;
+            })
+            .join("");
+          return `<text x="${x}" y="${baseline + index * lineHeight}"${family} font-size="${fontSize}" text-anchor="${align}" fill="${stroke}" xml:space="preserve">${body}</text>`;
+        })
+        .join("");
+    }
     return lines
       .map((line, index) => {
         const y = baseline + index * lineHeight;

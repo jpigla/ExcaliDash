@@ -84,6 +84,7 @@ export function summarize(element: Element) {
       ? {
           fontFamily: element.fontFamily,
           textFormatting: element.textFormatting,
+          textRuns: element.textRuns,
         }
       : {}),
   };
@@ -333,6 +334,11 @@ export function changeElements(
           Object.assign(patch, {
             text: value,
             originalText: value,
+            ...(text !== undefined &&
+            value !== before.originalText &&
+            before.textRuns
+              ? { textRuns: [] }
+              : {}),
             fontSize: size,
             fontFamily: family,
             lineHeight,

@@ -414,10 +414,33 @@ var measureText = (text, font, lineHeight) => {`,
   );
 }
 
-const controls = `function TextFormattingControls({ elements, appState, app, selectedFontFamily, updateData }) {
+const controls = `function getTextFormattingShortcut(event) {
+  if (!event[KEYS.CTRL_OR_CMD] || event.altKey || event.isComposing) return null;
+  const key = event.key.toLowerCase();
+  if (event.shiftKey) return key === "s" ? "strikethrough" : null;
+  switch (key) {
+    case "b": return "weight";
+    case "i": return "italic";
+    case "u": return "underline";
+    default: return null;
+  }
+}
+
+function getSelectedTextFormattingTargets(elements, appState) {
+  return getSelectedElements(elements, appState, { includeBoundTextElement: true })
+    .filter(element => isTextElement(element) && !element.locked && !element.isDeleted);
+}
+
+function getTextFormattingStyles(element, start = 0, end = element.originalText.length) {
+  const base = getTextFormatting(element);
+  const pieces = element.textRuns?.length ? stylesInRange(element, start, end) : [];
+  return pieces.length ? pieces.map(({ style }) => ({ ...base, ...style })) : [base];
+}
+
+function TextFormattingControls({ elements, appState, app, selectedFontFamily, updateData }) {
   const { langCode } = useI18n();
   const german = langCode.startsWith("de");
-  const targets = getSelectedElements(elements, appState, { includeBoundTextElement: true }).filter(isTextElement);
+  const targets = getSelectedTextFormattingTargets(elements, appState);
   const editing = app.scene.getElement(appState.editingTextElement?.id);
   if (isTextElement(editing) && !targets.some(({ id }) => id === editing.id)) targets.push(editing);
   const editor = activeTextEditors.get(app);
@@ -428,14 +451,11 @@ const controls = `function TextFormattingControls({ elements, appState, app, sel
     document.addEventListener("selectionchange", refresh);
     return () => document.removeEventListener("selectionchange", refresh);
   }, [editor]);
-  const activeRange = editing && editor && editor.selectionStart < editor.selectionEnd
-    ? stylesInRange(editing, editor.selectionStart, editor.selectionEnd)
-    : null;
-  const styles = activeRange?.length
-    ? activeRange.map(({ style }) => getTextFormatting({ ...editing, textFormatting: { ...getTextFormatting(editing), ...style } }))
-    : (targets.length ? targets : [{
-    fontFamily: selectedFontFamily, textFormatting: appState.currentItemTextFormatting
-  }]).map(getTextFormatting);
+  const styles = editing && editor && editor.selectionStart < editor.selectionEnd
+    ? getTextFormattingStyles(editing, editor.selectionStart, editor.selectionEnd)
+    : targets.length
+      ? targets.flatMap(element => getTextFormattingStyles(element))
+      : [getTextFormatting({ fontFamily: selectedFontFamily, textFormatting: appState.currentItemTextFormatting })];
   const all = (property, value) => styles.every((style) => style[property] === value);
   const some = (property, value) => styles.some((style) => style[property] === value);
   const set = (property, value) => updateData({
@@ -537,6 +557,30 @@ function patchEditor(source: string, runsModule: string) {
     `    const { cachedElements, resetAll, resetContainers, ...nextAppState } = value;`,
     `    const { cachedElements, resetAll, resetContainers, textFormattingChange, ...nextAppState } = value;
     if (textFormattingChange) return changeTextFormatting(elements, appState, textFormattingChange, app);`,
+  );
+  source = replace(
+    source,
+    `        if (this.actionManager.handleKeyDown(event)) {`,
+    `        if (!this.state.viewModeEnabled && !this.state.openDialog && !this.state.editingTextElement && !isInputLike(event.target)) {
+          const format = getTextFormattingShortcut(event);
+          if (format) {
+            const targets = getSelectedTextFormattingTargets(this.scene.getNonDeletedElementsMap(), this.state);
+            if (targets.length) {
+              const on = format === "weight" ? 700 : true;
+              const off = format === "weight" ? 400 : false;
+              const allFormatted = targets.every(element =>
+                getTextFormattingStyles(element).every(style => style[format] === on)
+              );
+              event.preventDefault();
+              event.stopPropagation();
+              this.actionManager.executeAction(actionChangeFontFamily, "keyboard", {
+                textFormattingChange: { [format]: allFormatted ? off : on }
+              });
+              return;
+            }
+          }
+        }
+        if (this.actionManager.handleKeyDown(event)) {`,
   );
   source = replace(
     source,
@@ -709,10 +753,8 @@ var actionChangeTextAlign`,
     source,
     `  editable.onkeydown = (event) => {\n    if (!event.shiftKey && actionZoomIn.keyTest(event)) {`,
     `  editable.onkeydown = (event) => {
-    if (event[KEYS.CTRL_OR_CMD] && !event.altKey && !event.isComposing) {
-      const key = event.key.toLowerCase();
-      const format = event.shiftKey ? (key === "s" ? "strikethrough" : null)
-        : ({ b: "weight", i: "italic", u: "underline" })[key];
+    {
+      const format = getTextFormattingShortcut(event);
       if (format) {
         const textElement = app.scene.getElement(id);
         if (textElement) {
@@ -731,7 +773,7 @@ var actionChangeTextAlign`,
             return;
           }
           editable.pendingFormatting = undefined;
-          const styles = stylesInRange(textElement, start, end).map(({style}) => ({ ...base, ...style }));
+          const styles = getTextFormattingStyles(textElement, start, end);
           const off = format === "weight" ? 400 : false;
           const change = { [format]: styles.every(style => style[format] === value) ? off : value };
           app.actionManager.executeAction(actionChangeFontFamily, "ui", { textFormattingChange: change });

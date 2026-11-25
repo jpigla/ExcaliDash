@@ -1,5 +1,5 @@
 type TextStyle = {
-  weight: 300 | 400 | 700;
+  weight: 400 | 700;
   italic: boolean;
   underline: boolean;
   strikethrough: boolean;
@@ -22,7 +22,7 @@ const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 function normalizedStyle(style: Overrides | undefined): Overrides {
   const result: Overrides = {};
-  if (style?.weight === 300 || style?.weight === 400 || style?.weight === 700) {
+  if (style?.weight === 400 || style?.weight === 700) {
     result.weight = style.weight;
   }
   for (const key of ["italic", "underline", "strikethrough"] as const) {

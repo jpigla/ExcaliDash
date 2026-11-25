@@ -48,15 +48,23 @@ test("board fonts and formatting survive editing, save, and native export", asyn
     ]) {
       await expect(page.getByText(font, { exact: true })).toBeVisible();
     }
-    await page.getByText("Kalam", { exact: true }).click();
-
-    const weights = page.getByRole("combobox", { name: "Font weight" });
     const format = page.getByRole("group", { name: "Text formatting" });
-    await weights.selectOption("300");
+    await page.getByText("Redacted Script", { exact: true }).click();
+    await expect(format.getByRole("button")).toHaveCount(4);
+    await expect(format.getByRole("combobox")).toHaveCount(0);
+    await page.getByTestId("font-family-show-fonts").click();
+    await page.getByText("Kalam", { exact: true }).click();
+    await expect(format.getByRole("button")).toHaveCount(4);
+    await expect(format.getByRole("combobox")).toHaveCount(0);
+
+    const bold = format.getByRole("button", { name: "Bold" });
+    await bold.click();
+    await expect(bold).toHaveAttribute("aria-pressed", "true");
+    await bold.click();
     await expect
       .poll(async () => (await sceneText())?.textFormatting?.weight)
-      .toBe(300);
-    await format.getByRole("button", { name: "Bold" }).click();
+      .toBe(400);
+    await bold.click();
     await format.getByRole("button", { name: "Italic" }).click();
     await format.getByRole("button", { name: "Underline" }).click();
     await format.getByRole("button", { name: "Strikethrough" }).click();

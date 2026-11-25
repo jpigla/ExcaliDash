@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { z } from "zod";
 
 export const textFormattingSchema = z.object({
-  weight: z.union([z.literal(300), z.literal(400), z.literal(700)]).optional(),
+  weight: z.union([z.literal(400), z.literal(700)]).optional(),
   italic: z.boolean().optional(),
   underline: z.boolean().optional(),
   strikethrough: z.boolean().optional(),

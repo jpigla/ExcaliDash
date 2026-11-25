@@ -41,11 +41,11 @@ function patchCore(source: string, catalog: FontCatalog, runsModule: string) {
     source,
     "var FONT_FAMILY = {",
     `var boardFonts = ${JSON.stringify(catalog)};
-var supportsLightFont = (family) => boardFonts.some((font) => font.id === family && font.weights.includes(300));
+var hasNativeBoldFace = (family) => boardFonts.some((font) => font.id === family && font.weights.includes(700));
 var getTextFormatting = (element) => {
   const format = element?.textFormatting;
   return {
-    weight: format?.weight === 700 ? 700 : format?.weight === 300 && supportsLightFont(element.fontFamily) ? 300 : 400,
+    weight: format?.weight === 700 ? 700 : 400,
     italic: format?.italic === true,
     underline: format?.underline === true,
     strikethrough: format?.strikethrough === true
@@ -410,7 +410,7 @@ var measureText = (text, font, lineHeight) => {`,
   );
   return (
     source +
-    "\nexport { getTextFormatting, getTextDecoration, supportsLightFont };\n"
+    "\nexport { getTextFormatting, getTextDecoration, hasNativeBoldFace };\n"
   );
 }
 
@@ -453,27 +453,11 @@ const controls = `function TextFormattingControls({ elements, appState, app, sel
     children: letter
   }, property);
   const formatting = german ? "Textformatierung" : "Text formatting";
-  const lightAvailable = targets.length
-    ? targets.every(({ fontFamily }) => supportsLightFont(fontFamily))
-    : supportsLightFont(selectedFontFamily);
   return jsxs20("div", { className: "excalidash-text-formatting", role: "group", "aria-label": formatting, children: [
-    lightAvailable && jsx34("select", {
-      "aria-label": german ? "Schriftstärke" : "Font weight",
-      value: all("weight", 300) ? 300 : all("weight", 400) ? 400 : all("weight", 700) ? 700 : "",
-      onChange: (event) => set("weight", Number(event.currentTarget.value)),
-      children: [
-        jsx34("option", { value: "", disabled: true, children: german ? "Gemischt" : "Mixed" }, "mixed"),
-        jsx34("option", { value: 300, children: german ? "Leicht (300)" : "Light (300)" }, 300),
-        jsx34("option", { value: 400, children: "Regular (400)" }, 400),
-        jsx34("option", { value: 700, children: german ? "Fett (700)" : "Bold (700)" }, 700)
-      ]
-    }),
-    jsxs20("div", { className: "excalidash-text-formatting-buttons", children: [
-      toggle("weight", 700, german ? "Fett" : "Bold", german ? "F" : "B", 400, { fontWeight: 700 }),
-      toggle("italic", true, german ? "Kursiv" : "Italic", "I", false, { fontStyle: "italic" }),
-      toggle("underline", true, german ? "Unterstrichen" : "Underline", "U", false, { textDecoration: "underline" }),
-      toggle("strikethrough", true, german ? "Durchgestrichen" : "Strikethrough", "S", false, { textDecoration: "line-through" })
-    ] })
+    toggle("weight", 700, german ? "Fett" : "Bold", german ? "F" : "B", 400, { fontWeight: 700 }),
+    toggle("italic", true, german ? "Kursiv" : "Italic", "I", false, { fontStyle: "italic" }),
+    toggle("underline", true, german ? "Unterstrichen" : "Underline", "U", false, { textDecoration: "underline" }),
+    toggle("strikethrough", true, german ? "Durchgestrichen" : "Strikethrough", "S", false, { textDecoration: "line-through" })
   ] });
 }
 
@@ -541,7 +525,7 @@ function changeTextFormatting(elements, appState, change, app) {
 function patchEditor(source: string, runsModule: string) {
   source =
     `import { activeTextEditors, createBoardTextEditor, stylesInRange, setRangeStyle, clearStyleOverrides, moveTextRuns } from ${JSON.stringify(runsModule)};\n` +
-    'import { getTextFormatting, getTextDecoration, supportsLightFont } from "./chunk-4FTI6OG3.js";\n' +
+    'import { getTextFormatting, getTextDecoration, hasNativeBoldFace } from "./chunk-4FTI6OG3.js";\n' +
     source;
   source = replace(
     source,
@@ -558,7 +542,7 @@ function patchEditor(source: string, runsModule: string) {
     source,
     `      const chars = Array.from(uniqueChars.values()).join();`,
     `      const chars = Array.from(uniqueChars.values()).join();
-      if (!skipFontFaceCheck && supportsLightFont(nextFontFamily) && elementContainerMapping.size) {
+      if (!skipFontFaceCheck && hasNativeBoldFace(nextFontFamily) && elementContainerMapping.size) {
         const formatted = [...elementContainerMapping.keys()];
         Fonts.loadElementsFonts(formatted).then((fontFaces) => {
           for (const [element, container] of elementContainerMapping) {

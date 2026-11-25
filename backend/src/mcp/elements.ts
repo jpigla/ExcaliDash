@@ -105,17 +105,6 @@ function textGeometry(text: string, fontSize: number, lineHeight: number) {
   };
 }
 
-function normalizeTextFormatting(fontFamily: number, input: unknown) {
-  const result = textFormattingSchema.safeParse(input);
-  const format = result.success ? result.data : {};
-  if (
-    format.weight === 300 &&
-    !boardFontById.get(fontFamily)?.weights.includes(300)
-  )
-    format.weight = 400;
-  return format;
-}
-
 function newElement(input: NewElement, frameId?: string): Element {
   const linear = isLinear(input.type);
   const dx = (input.endX ?? input.x + 100) - input.x;
@@ -184,14 +173,7 @@ function newElement(input: NewElement, frameId?: string): Element {
       fontSize,
       fontFamily,
       lineHeight,
-      ...(input.textFormatting
-        ? {
-            textFormatting: normalizeTextFormatting(
-              fontFamily,
-              input.textFormatting,
-            ),
-          }
-        : {}),
+      ...(input.textFormatting ? { textFormatting: input.textFormatting } : {}),
       textAlign: "left",
       verticalAlign: "top",
       containerId: null,
@@ -327,8 +309,7 @@ export function changeElements(
             fontFamily !== undefined
               ? (boardFontById.get(family)?.metrics.lineHeight ?? 1.25)
               : numeric(before.lineHeight, 1.25);
-          const previous = normalizeTextFormatting(
-            numeric(before.fontFamily, 5),
+          const previous = textFormattingSchema.safeParse(
             before.textFormatting,
           );
           Object.assign(patch, {
@@ -344,10 +325,10 @@ export function changeElements(
             lineHeight,
             ...(typographyChanged
               ? {
-                  textFormatting: normalizeTextFormatting(family, {
-                    ...previous,
+                  textFormatting: {
+                    ...previous.data,
                     ...textFormatting,
-                  }),
+                  },
                 }
               : {}),
             ...textGeometry(value, size, lineHeight),

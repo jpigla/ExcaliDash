@@ -178,6 +178,79 @@ test("board fonts and formatting survive editing, save, and native export", asyn
   }
 });
 
+test("keyboard shortcuts toggle formatting on a selected text element", async ({
+  page,
+  request,
+}) => {
+  const drawing = await createDrawing(request, { name: "Text selection E2E" });
+  try {
+    await page.goto(`/editor/${drawing.id}`);
+    await expect(
+      page.getByRole("heading", { name: drawing.name }),
+    ).toBeVisible();
+    const canvas = page.locator("canvas.excalidraw__canvas.interactive");
+    const editor = page.locator(".excalidraw-wysiwyg");
+    const format = page.getByRole("group", { name: "Text formatting" });
+    const bold = format.getByRole("button", { name: "Bold" });
+    await canvas.click({ position: { x: 410, y: 280 } });
+    await page.keyboard.press("t");
+    await canvas.click({ position: { x: 450, y: 300 } });
+    await editor.fill("Mixed format");
+    await editor.evaluate((element) => {
+      const range = document.createRange();
+      range.setStart(element.firstChild!, 0);
+      range.setEnd(element.firstChild!, 5);
+      const selection = document.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+    await editor.press("ControlOrMeta+b");
+    await expect(editor.getByText("Mixed", { exact: true })).toHaveCSS(
+      "font-weight",
+      "700",
+    );
+    await editor.press("Escape");
+
+    await canvas.click({ position: { x: 410, y: 280 } });
+    await canvas.click({ position: { x: 470, y: 312 } });
+    await expect(editor).toBeHidden();
+    await expect(bold).toHaveAttribute("aria-pressed", "mixed");
+
+    for (const [key, label] of [
+      ["b", "Bold"],
+      ["i", "Italic"],
+      ["u", "Underline"],
+      ["Shift+s", "Strikethrough"],
+    ]) {
+      const button = format.getByRole("button", { name: label });
+      await page.keyboard.press(`ControlOrMeta+${key}`);
+      await expect(button).toHaveAttribute("aria-pressed", "true");
+      await page.keyboard.press(`ControlOrMeta+${key}`);
+      await expect(button).toHaveAttribute("aria-pressed", "false");
+      await page.keyboard.press(`ControlOrMeta+${key}`);
+      await expect(button).toHaveAttribute("aria-pressed", "true");
+    }
+    await expect
+      .poll(async () =>
+        (await getDrawing(request, drawing.id)).elements?.find(
+          (element) => element.type === "text",
+        ),
+      )
+      .toMatchObject({
+        text: "Mixed format",
+        textRuns: [],
+        textFormatting: {
+          weight: 700,
+          italic: true,
+          underline: true,
+          strikethrough: true,
+        },
+      });
+  } finally {
+    await deleteDrawing(request, drawing.id);
+  }
+});
+
 test("keyboard shortcuts and toolbar apply only to selected letters and words", async ({
   page,
   request,

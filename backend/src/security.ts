@@ -189,6 +189,7 @@ export const sanitizeSvg = (svgContent: string): string => {
         "font-style",
         "text-decoration",
         "direction",
+        "xml:space",
         "letter-spacing",
         "text-anchor",
         "dominant-baseline",

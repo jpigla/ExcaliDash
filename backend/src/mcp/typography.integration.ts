@@ -92,3 +92,32 @@ it("updates one formatting field without resetting the others", () => {
     textFormatting: { weight: 300, italic: true, underline: true },
   });
 });
+
+it("renders selectively styled words in MCP previews and preserves SVG spans", () => {
+  const [plain] = changeElements(
+    [],
+    [
+      {
+        op: "add",
+        element: {
+          type: "text",
+          text: "First word",
+          fontFamily: 101,
+          x: 5,
+          y: 5,
+          fontSize: 36,
+        },
+      },
+    ],
+  ).elements;
+  const rich = {
+    ...plain,
+    textRuns: [{ start: 6, end: 10, style: { weight: 700, underline: true } }],
+  };
+  expect(renderScene([rich]).data).not.toBe(renderScene([plain]).data);
+  expect(
+    sanitizeSvg(
+      '<svg xmlns="http://www.w3.org/2000/svg"><text xml:space="preserve">First <tspan text-decoration="underline">word</tspan></text></svg>',
+    ),
+  ).toContain('<tspan text-decoration="underline">word</tspan>');
+});

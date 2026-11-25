@@ -30,3 +30,60 @@ export const boardFontById = new Map(boardFonts.map((font) => [font.id, font]));
 export const boardFontFiles = boardFonts.flatMap(({ slug, weights }) =>
   weights.map((weight) => resolve(assetDirectory, `${slug}-${weight}.ttf`)),
 );
+
+export const textRunsSchema = z
+  .array(
+    z.object({
+      start: z.number().int().nonnegative().max(200_000),
+      end: z.number().int().positive().max(200_000),
+      style: textFormattingSchema,
+    }),
+  )
+  .max(200_000)
+  .refine((runs) =>
+    runs.every(
+      (run, index) =>
+        run.end > run.start &&
+        (index === 0 || runs[index - 1].end <= run.start),
+    ),
+  );
+
+export function styledTextLines(
+  text: string,
+  original: string,
+  runs: z.infer<typeof textRunsSchema>,
+) {
+  let offset = 0;
+  let index = 0;
+  return text.split("\n").map((line) => {
+    const found = original.indexOf(line, offset);
+    if (found !== -1) offset = found;
+    const end = offset + line.length;
+    while (index < runs.length && runs[index].end <= offset) index++;
+    const pieces: {
+      text: string;
+      style: z.infer<typeof textFormattingSchema>;
+    }[] = [];
+    let cursor = offset;
+    for (let i = index; i < runs.length && runs[i].start < end; i++) {
+      const run = runs[i];
+      if (cursor < run.start)
+        pieces.push({
+          text: line.slice(cursor - offset, run.start - offset),
+          style: {},
+        });
+      cursor = Math.max(cursor, run.start);
+      const stop = Math.min(run.end, end);
+      if (cursor < stop)
+        pieces.push({
+          text: line.slice(cursor - offset, stop - offset),
+          style: run.style,
+        });
+      cursor = stop;
+    }
+    if (cursor < end)
+      pieces.push({ text: line.slice(cursor - offset), style: {} });
+    offset = end + (original[end] === "\n" ? 1 : 0);
+    return pieces;
+  });
+}

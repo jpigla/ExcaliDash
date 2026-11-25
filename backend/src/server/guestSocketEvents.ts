@@ -1,4 +1,4 @@
-import { textFormattingSchema } from "../textFormatting";
+import { textFormattingSchema, textRunsSchema } from "../textFormatting";
 import { z } from "zod";
 import { isGuestImageType } from "../fileProcessing";
 import { sanitizeElementText, sanitizeUrl } from "../security";
@@ -118,6 +118,7 @@ const element = z
     fontSize: z.number().positive().max(10_000).optional(),
     fontFamily: z.number().int().positive().optional(),
     textFormatting: textFormattingSchema.optional(),
+    textRuns: textRunsSchema.optional(),
     textAlign: z.enum(["left", "center", "right"]).optional(),
     verticalAlign: z.enum(["top", "middle", "bottom"]).optional(),
     containerId: nullableId.optional(),

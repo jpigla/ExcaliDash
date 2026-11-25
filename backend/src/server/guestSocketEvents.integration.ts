@@ -113,6 +113,9 @@ describe("guest Socket.IO packet limits", () => {
       type: "text",
       text: "Grüße",
       originalText: "Grüße",
+      textRuns: [
+        { start: 2, end: 4, style: { italic: false, underline: true } },
+      ],
       fontFamily: 101,
       fontSize: 20,
       textAlign: "left",

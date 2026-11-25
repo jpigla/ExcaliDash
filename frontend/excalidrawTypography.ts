@@ -33,7 +33,10 @@ function replace(source: string, original: string, replacement: string) {
   );
 }
 
-function patchCore(source: string, catalog: FontCatalog) {
+function patchCore(source: string, catalog: FontCatalog, runsModule: string) {
+  source =
+    `import { boardTextLines, wrapBoardText, safeTextRuns } from ${JSON.stringify(runsModule)};\n` +
+    source;
   source = replace(
     source,
     "var FONT_FAMILY = {",
@@ -243,6 +246,168 @@ var FONT_FAMILY = {
       }),`,
     `      getFontString(newElement2),`,
   );
+  source = replace(
+    source,
+    "var measureText = (text, font, lineHeight) => {",
+    `var textWithRun = (element, style) => ({
+  ...element, textFormatting: { ...getTextFormatting(element), ...style }
+});
+var measureBoardRuns = (element, text) => {
+  if (!element.textRuns?.length) return measureText(text, getFontString(element), element.lineHeight);
+  const widths = boardTextLines(element, text).map(line =>
+    line.reduce((sum, {text, style}) => sum + getLineWidth(text, getFontString(textWithRun(element, style))), 0));
+  return { width: widths.reduce((max, width) => Math.max(max, width), 0), height: widths.length * element.fontSize * element.lineHeight };
+};
+var wrapForTextElement = (element, text, width) =>
+  element.textRuns?.length
+    ? wrapBoardText({ ...element, originalText: text }, width,
+        ({text, style}) => getLineWidth(text, getFontString(textWithRun(element, style))))
+    : wrapText(text, getFontString(element), width);
+var measureText = (text, font, lineHeight) => {`,
+  );
+  source = replace(
+    source,
+    `    boundTextUpdates.text = wrapText(
+      textElement.originalText,
+      getFontString(textElement),
+      maxWidth
+    );`,
+    `    boundTextUpdates.text = wrapForTextElement(textElement, textElement.originalText, maxWidth);`,
+  );
+  source = replace(
+    source,
+    `  const metrics = measureText(
+    boundTextUpdates.text,
+    getFontString(textElement),
+    textElement.lineHeight
+  );`,
+    `  const metrics = measureBoardRuns(textElement, boundTextUpdates.text);`,
+  );
+  source = replace(
+    source,
+    `  let { width: nextWidth, height: nextHeight } = measureText(
+    nextText,
+    getFontString(element),
+    element.lineHeight
+  );`,
+    `  let { width: nextWidth, height: nextHeight } = measureBoardRuns(element, nextText);`,
+  );
+  source = replace(
+    source,
+    `    const prevMetrics = measureText(
+      element.text,
+      getFontString(element),
+      element.lineHeight
+    );`,
+    `    const prevMetrics = measureBoardRuns(element, element.text);`,
+  );
+  source = replace(
+    source,
+    `    text = wrapText(
+      text,
+      getFontString(textElement),
+      container ? getBoundTextMaxWidth(container, textElement) : textElement.width
+    );`,
+    `    text = wrapForTextElement(textElement, text, container ? getBoundTextMaxWidth(container, textElement) : textElement.width);`,
+  );
+  source = replace(
+    source,
+    `        text = wrapText(
+          textElement.originalText,
+          getFontString(textElement),
+          maxWidth
+        );`,
+    `        text = wrapForTextElement(textElement, textElement.originalText, maxWidth);`,
+  );
+  source = replace(
+    source,
+    `      const metrics = measureText(
+        text,
+        getFontString(textElement),
+        textElement.lineHeight
+      );`,
+    `      const metrics = measureBoardRuns(textElement, text);`,
+  );
+  source = replace(
+    source,
+    `    const text = wrapText(
+      element.originalText,
+      getFontString(element),
+      Math.abs(newWidth)
+    );
+    const metrics = measureText(
+      text,
+      getFontString(element),
+      element.lineHeight
+    );`,
+    `    const text = wrapForTextElement(element, element.originalText, Math.abs(newWidth));
+    const metrics = measureBoardRuns(element, text);`,
+  );
+  source = replace(
+    source,
+    `        const { underline, strikethrough } = getTextFormatting(element);
+        for (let index = 0; index < lines.length; index++) {`,
+    `        const { underline, strikethrough } = getTextFormatting(element);
+        if (element.textRuns?.length) {
+          const styledLines = boardTextLines(element, lines.join("\\n"));
+          context.textAlign = "left";
+          for (const [index, line] of styledLines.entries()) {
+            const baseline = index * lineHeightPx + verticalOffset;
+            const segments = line.map(({text, style}) => {
+              const styled = textWithRun(element, style);
+              const font = getFontString(styled);
+              context.font = font;
+              return { text, font, width: context.measureText(text).width, format: getTextFormatting(styled) };
+            });
+            const width = segments.reduce((sum, segment) => sum + segment.width, 0);
+            let x = horizontalOffset - (element.textAlign === "center" ? width / 2 : element.textAlign === "right" ? width : 0);
+            for (const segment of rtl ? segments.reverse() : segments) {
+              context.font = segment.font;
+              context.fillText(segment.text, x, baseline);
+              const thickness = Math.max(1, element.fontSize / 16);
+              if (segment.format.underline) context.fillRect(x, baseline + element.fontSize * 0.1, segment.width, thickness);
+              if (segment.format.strikethrough) context.fillRect(x, baseline - element.fontSize * 0.3, segment.width, thickness);
+              x += segment.width;
+            }
+          }
+        } else for (let index = 0; index < lines.length; index++) {`,
+  );
+  source = replace(
+    source,
+    `        for (let i = 0; i < lines.length; i++) {
+          const text = svgRoot.ownerDocument.createElementNS(SVG_NS, "text");`,
+    `        const runLines = element.textRuns?.length ? boardTextLines(element, lines.join("\\n")) : null;
+        for (let i = 0; i < lines.length; i++) {
+          const text = svgRoot.ownerDocument.createElementNS(SVG_NS, "text");`,
+  );
+  source = replace(
+    source,
+    `          node.appendChild(text);`,
+    `          if (runLines) {
+            text.textContent = "";
+            text.removeAttribute("text-decoration");
+            text.setAttribute("xml:space", "preserve");
+            for (const segment of runLines[i]) {
+              const tspan = svgRoot.ownerDocument.createElementNS(SVG_NS, "tspan");
+              tspan.textContent = segment.text;
+              const format = getTextFormatting(textWithRun(element, segment.style));
+              tspan.setAttribute("font-weight", String(format.weight));
+              tspan.setAttribute("font-style", format.italic ? "italic" : "normal");
+              const decoration = getTextDecoration(format);
+              if (decoration) tspan.setAttribute("text-decoration", decoration);
+              text.appendChild(tspan);
+            }
+          }
+          node.appendChild(text);`,
+  );
+  source = replace(
+    source,
+    `      weights.add(font.weights.includes(weight) ? weight : 400);`,
+    `      weights.add(font.weights.includes(weight) ? weight : 400);
+      for (const { style } of safeTextRuns(element)) {
+        if (font.weights.includes(style?.weight)) weights.add(style.weight);
+      }`,
+  );
   return (
     source +
     "\nexport { getTextFormatting, getTextDecoration, supportsLightFont };\n"
@@ -255,7 +420,20 @@ const controls = `function TextFormattingControls({ elements, appState, app, sel
   const targets = getSelectedElements(elements, appState, { includeBoundTextElement: true }).filter(isTextElement);
   const editing = app.scene.getElement(appState.editingTextElement?.id);
   if (isTextElement(editing) && !targets.some(({ id }) => id === editing.id)) targets.push(editing);
-  const styles = (targets.length ? targets : [{
+  const editor = activeTextEditors.get(app);
+  const [, refreshSelection] = useState8(0);
+  useEffect15(() => {
+    if (!editor) return;
+    const refresh = () => refreshSelection(value => value + 1);
+    document.addEventListener("selectionchange", refresh);
+    return () => document.removeEventListener("selectionchange", refresh);
+  }, [editor]);
+  const activeRange = editing && editor && editor.selectionStart < editor.selectionEnd
+    ? stylesInRange(editing, editor.selectionStart, editor.selectionEnd)
+    : null;
+  const styles = activeRange?.length
+    ? activeRange.map(({ style }) => getTextFormatting({ ...editing, textFormatting: { ...getTextFormatting(editing), ...style } }))
+    : (targets.length ? targets : [{
     fontFamily: selectedFontFamily, textFormatting: appState.currentItemTextFormatting
   }]).map(getTextFormatting);
   const all = (property, value) => styles.every((style) => style[property] === value);
@@ -269,6 +447,7 @@ const controls = `function TextFormattingControls({ elements, appState, app, sel
     "aria-label": label,
     "aria-pressed": all(property, value) ? true : some(property, value) ? "mixed" : false,
     style,
+    "aria-keyshortcuts": property === "strikethrough" ? "Meta+Shift+S Control+Shift+S" : "Meta+" + ({weight:"B",italic:"I",underline:"U"})[property] + " Control+" + ({weight:"B",italic:"I",underline:"U"})[property],
     onPointerDown: (event) => event.preventDefault(),
     onClick: () => set(property, all(property, value) ? off : value),
     children: letter
@@ -299,14 +478,25 @@ const controls = `function TextFormattingControls({ elements, appState, app, sel
 }
 
 function changeTextFormatting(elements, appState, change, app) {
+  const editor = activeTextEditors.get(app);
+  const edited = app.scene.getElement(appState.editingTextElement?.id);
+  const rangeStart = editor?.selectionStart ?? 0;
+  const rangeEnd = editor?.selectionEnd ?? 0;
+  const isPartial = edited && rangeStart < rangeEnd && (rangeStart !== 0 || rangeEnd !== edited.originalText.length);
   const candidates = changeProperty(elements, appState, (element) => {
     if (!isTextElement(element) || element.locked || element.isDeleted) return element;
     const current = getTextFormatting(element);
+    if (isPartial && element.id === edited.id) {
+      const textRuns = setRangeStyle(element, rangeStart, rangeEnd, change, current);
+      return newElementWith(element, { textRuns });
+    }
     const next = getTextFormatting({
       fontFamily: element.fontFamily, textFormatting: { ...current, ...change }
     });
-    if (Object.keys(change).every((key) => current[key] === next[key])) return element;
-    return newElementWith(element, { textFormatting: next });
+    const runs = clearStyleOverrides(element, change);
+    if (Object.keys(change).every((key) => current[key] === next[key]) &&
+      JSON.stringify(runs) === JSON.stringify(element.textRuns ?? [])) return element;
+    return newElementWith(element, { textFormatting: next, ...(element.textRuns?.length ? { textRuns: runs } : {}) });
   }, true);
   const updated = arrayToMap(candidates);
   let changed = false;
@@ -338,7 +528,7 @@ function changeTextFormatting(elements, appState, change, app) {
     elements: changed ? elements.map(({ id }) => updated.get(id)) : elements,
     appState: {
       ...appState,
-      currentItemTextFormatting: {
+      currentItemTextFormatting: isPartial ? appState.currentItemTextFormatting : {
         ...appState.currentItemTextFormatting,
         ...change
       }
@@ -348,8 +538,9 @@ function changeTextFormatting(elements, appState, change, app) {
 }
 `;
 
-function patchEditor(source: string) {
+function patchEditor(source: string, runsModule: string) {
   source =
+    `import { activeTextEditors, createBoardTextEditor, stylesInRange, setRangeStyle, clearStyleOverrides, moveTextRuns } from ${JSON.stringify(runsModule)};\n` +
     'import { getTextFormatting, getTextDecoration, supportsLightFont } from "./chunk-4FTI6OG3.js";\n' +
     source;
   source = replace(
@@ -499,12 +690,132 @@ var actionChangeTextAlign`,
           textFormatting: this.state.currentItemTextFormatting
         };`,
   );
+  source = replace(
+    source,
+    `  const editable = document.createElement("textarea");`,
+    `  const editable = createBoardTextEditor();
+  activeTextEditors.set(app, editable);`,
+  );
+  source = replace(source, `  editable.wrap = "off";\n`, "");
+  source = replace(
+    source,
+    `      editable.scrollTop = 0;`,
+    `      editable.renderRuns(updatedTextElement, getTextFormatting(updatedTextElement));
+      editable.scrollTop = 0;`,
+  );
+  source = replace(
+    source,
+    `        textDecoration: getTextDecoration(getTextFormatting(updatedTextElement)),`,
+    `        textDecoration: updatedTextElement.textRuns?.length ? "none" : getTextDecoration(getTextFormatting(updatedTextElement)),`,
+  );
+  source = replace(
+    source,
+    `    editable.onblur = null;
+    editable.oninput = null;`,
+    `    activeTextEditors.delete(app);
+    editable.onblur = null;
+    editable.oninput = null;`,
+  );
+  source = replace(
+    source,
+    `      if (target instanceof HTMLTextAreaElement) {`,
+    `      if (target === editable) {`,
+  );
+  source = replace(
+    source,
+    `  editable.onkeydown = (event) => {\n    if (!event.shiftKey && actionZoomIn.keyTest(event)) {`,
+    `  editable.onkeydown = (event) => {
+    if (event[KEYS.CTRL_OR_CMD] && !event.altKey && !event.isComposing) {
+      const key = event.key.toLowerCase();
+      const format = event.shiftKey ? (key === "s" ? "strikethrough" : null)
+        : ({ b: "weight", i: "italic", u: "underline" })[key];
+      if (format) {
+        const textElement = app.scene.getElement(id);
+        if (textElement) {
+          event.preventDefault();
+          event.stopPropagation();
+          const value = format === "weight" ? 700 : true;
+          const base = getTextFormatting(textElement);
+          const start = editable.selectionStart;
+          const end = editable.selectionEnd;
+          if (start === end) {
+            const preceding = stylesInRange(textElement, Math.max(0, start - 1), start).at(-1)?.style;
+            const pending = editable.pendingFormatting?.offset === start ? editable.pendingFormatting.style : preceding;
+            const style = { ...base, ...pending };
+            style[format] = style[format] === value ? (format === "weight" ? 400 : false) : value;
+            editable.pendingFormatting = { offset: start, style };
+            return;
+          }
+          editable.pendingFormatting = undefined;
+          const styles = stylesInRange(textElement, start, end).map(({style}) => ({ ...base, ...style }));
+          const off = format === "weight" ? 400 : false;
+          const change = { [format]: styles.every(style => style[format] === value) ? off : value };
+          app.actionManager.executeAction(actionChangeFontFamily, "ui", { textFormattingChange: change });
+          return;
+        }
+      }
+    }
+    if (event.key === "Enter" && !event[KEYS.CTRL_OR_CMD] && !event.isComposing) {
+      event.preventDefault();
+      const { value, selectionStart, selectionEnd } = editable;
+      editable.value = value.slice(0, selectionStart) + "\\n" + value.slice(selectionEnd);
+      editable.setSelectionRange(selectionStart + 1, selectionStart + 1);
+      onChange({ text: editable.value, inputStart: selectionStart });
+      return;
+    }
+    if (!event.shiftKey && actionZoomIn.keyTest(event)) {`,
+  );
+  source = replace(
+    source,
+    `      onChange(editable.value);`,
+    `      const start = editable.lastInputStart;
+      const pending = editable.pendingFormatting;
+      const current = app.scene.getElement(id);
+      const added = current ? editable.value.length - current.originalText.length : 0;
+      const typing = pending && start === pending.offset && start === editable.lastInputEnd && added > 0
+        ? { start, end: start + added, style: pending.style }
+        : undefined;
+      editable.pendingFormatting = typing ? { offset: typing.end, style: typing.style } : undefined;
+      onChange({ text: editable.value, inputStart: start, typing });`,
+  );
+  source = replace(
+    source,
+    `    const updateElement = (nextOriginalText, isDeleted) => {`,
+    `    const updateElement = (nextOriginalText, isDeleted, inputStart, typing) => {`,
+  );
+  source = replace(
+    source,
+    `            return newElementWith(_element, {
+              originalText: nextOriginalText,`,
+    `            let textRuns = _element.textRuns?.length ? moveTextRuns(_element, nextOriginalText, inputStart) : _element.textRuns;
+            if (typing) textRuns = setRangeStyle({ originalText: nextOriginalText, textRuns }, typing.start, typing.end, typing.style, getTextFormatting(_element));
+            return newElementWith(_element, {
+              ...(textRuns ? { textRuns } : {}),
+              originalText: nextOriginalText,`,
+  );
+  source = replace(
+    source,
+    `              ...refreshTextDimensions(
+                _element,
+                getContainerElement(_element, elementsMap),`,
+    `              ...refreshTextDimensions(
+                { ..._element, originalText: nextOriginalText, textRuns },
+                getContainerElement(_element, elementsMap),`,
+  );
+  source = replace(
+    source,
+    `      onChange: withBatchedUpdates((nextOriginalText) => {
+        updateElement(nextOriginalText, false);`,
+    `      onChange: withBatchedUpdates(({ text: nextOriginalText, inputStart, typing }) => {
+        updateElement(nextOriginalText, false, inputStart, typing);`,
+  );
   return source;
 }
 
 export function excalidrawTypography(
   catalog: FontCatalog,
   revision: string,
+  runsModule: string,
 ): {
   vite: VitePlugin;
   optimizer: EsbuildPlugin;
@@ -513,8 +824,8 @@ export function excalidrawTypography(
   let base = "/";
   const patch = (source: string, id: string) =>
     bundles.exec(id)?.[1] === "index"
-      ? patchEditor(source)
-      : patchCore(source, catalog);
+      ? patchEditor(source, runsModule)
+      : patchCore(source, catalog, runsModule);
   return {
     vite: {
       name,

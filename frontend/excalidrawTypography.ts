@@ -379,12 +379,13 @@ var measureText = (text, font, lineHeight) => {`,
               const styled = textWithRun(element, style);
               const font = getFontString(styled);
               context.font = font;
-              return { text, font, width: context.measureText(text).width, format: getTextFormatting(styled) };
+              return { text, font, width: context.measureText(text).width, format: getTextFormatting(styled), color: style.color ?? element.strokeColor };
             });
             const width = segments.reduce((sum, segment) => sum + segment.width, 0);
             let x = horizontalOffset - (element.textAlign === "center" ? width / 2 : element.textAlign === "right" ? width : 0);
             for (const segment of rtl ? segments.reverse() : segments) {
               context.font = segment.font;
+              context.fillStyle = segment.color;
               context.fillText(segment.text, x, baseline);
               const thickness = Math.max(1, element.fontSize / 16);
               if (segment.format.underline) context.fillRect(x, baseline + element.fontSize * 0.1, segment.width, thickness);
@@ -412,6 +413,7 @@ var measureText = (text, font, lineHeight) => {`,
             for (const segment of runLines[i]) {
               const tspan = svgRoot.ownerDocument.createElementNS(SVG_NS, "tspan");
               tspan.textContent = segment.text;
+              if (segment.style.color) tspan.setAttribute("fill", segment.style.color);
               const format = getTextFormatting(textWithRun(element, segment.style));
               tspan.setAttribute("font-weight", String(format.weight));
               tspan.setAttribute("font-style", format.italic ? "italic" : "normal");
@@ -449,6 +451,56 @@ function getTextFormattingStyles(element, start = 0, end = element.originalText.
   const base = getTextFormatting(element);
   const pieces = element.textRuns?.length ? stylesInRange(element, start, end) : [];
   return pieces.length ? pieces.map(({ style }) => ({ ...base, ...style })) : [base];
+}
+
+function getTextColorSelection(app, appState) {
+  const editor = activeTextEditors.get(app);
+  const element = app.scene.getElement(appState.editingTextElement?.id);
+  if (!editor || !isTextElement(element) || element.locked || element.isDeleted) return null;
+  const start = editor.selectionStart;
+  const end = editor.selectionEnd;
+  return start < end && (start > 0 || end < element.originalText.length)
+    ? { element, start, end }
+    : null;
+}
+
+function TextAwareStrokePicker({ elements, appState, updateData, app }) {
+  const { langCode } = useI18n();
+  const editor = activeTextEditors.get(app);
+  const [, refreshSelection] = useState8(0);
+  useEffect15(() => {
+    if (!editor) return;
+    const refresh = () => refreshSelection(value => value + 1);
+    document.addEventListener("selectionchange", refresh);
+    return () => document.removeEventListener("selectionchange", refresh);
+  }, [editor]);
+  const selection = getTextColorSelection(app, appState);
+  let color;
+  if (selection) {
+    const { element, start, end } = selection;
+    const colors = stylesInRange(element, start, end)
+      .map(({ style }) => style.color ?? element.strokeColor);
+    color = colors.every(value => value === colors[0]) ? colors[0] : null;
+  } else {
+    color = getFormValue(elements, appState, (element) => element.strokeColor, true, appState.currentItemStrokeColor);
+  }
+  const label = selection
+    ? langCode.startsWith("de") ? "Textfarbe der Auswahl" : "Selected text color"
+    : t("labels.stroke");
+  return jsxs20(Fragment4, { children: [
+    jsx34("h3", { "aria-hidden": "true", children: label }),
+    jsx34(ColorPicker, {
+      topPicks: DEFAULT_ELEMENT_STROKE_PICKS,
+      palette: DEFAULT_ELEMENT_STROKE_COLOR_PALETTE,
+      type: "elementStroke",
+      label,
+      color,
+      onChange: (color) => updateData({ currentItemStrokeColor: color }),
+      elements,
+      appState,
+      updateData
+    })
+  ] });
 }
 
 function TextFormattingControls({ elements, appState, app, selectedFontFamily, updateData }) {
@@ -501,6 +553,70 @@ function TextFormattingControls({ elements, appState, app, selectedFontFamily, u
   ] });
 }
 
+function updateFormattedTextLayout(elements, candidates, app, needsResize) {
+  const updated = arrayToMap(candidates);
+  let changed = false;
+  candidates.forEach((element, index) => {
+    const previous = elements[index];
+    if (previous === element || !isTextElement(element)) return;
+    changed = true;
+    if (!needsResize(element, previous)) return;
+    const container = app.scene.getContainerElement(previous);
+    // Work against a cloned container so undo captures the layout change.
+    const updatedContainer = container ? { ...updated.get(container.id) } : null;
+    redrawTextBoundingBox(element, updatedContainer, updated, false);
+    offsetElementAfterFontResize(previous, element);
+    if (container && updatedContainer && (container.width !== updatedContainer.width || container.height !== updatedContainer.height)) {
+      updated.set(container.id, newElementWith(updated.get(container.id), {
+        width: updatedContainer.width, height: updatedContainer.height
+      }));
+    }
+  });
+  if (changed) {
+    for (const element of candidates) {
+      if (isTextElement(element) && element !== app.scene.getElement(element.id)) updateBoundElements(element, updated);
+    }
+  }
+  return changed ? elements.map(({ id }) => updated.get(id)) : candidates;
+}
+
+function changeTextColor(elements, appState, value, app) {
+  const color = value.currentItemStrokeColor;
+  const selection = getTextColorSelection(app, appState);
+  if (selection) {
+    const change = { color: color.toLowerCase() };
+    if (!isTextRunColor(change.color)) return { captureUpdate: CaptureUpdateAction.EVENTUALLY };
+    const { element, start, end } = selection;
+    const textRuns = setRangeStyle(element, start, end, change, {
+      ...getTextFormatting(element), color: element.strokeColor
+    });
+    const candidates = elements.map((previous) => {
+      if (previous.id !== element.id || JSON.stringify(previous.textRuns ?? []) === JSON.stringify(textRuns)) return previous;
+      return newElementWith(previous, { textRuns });
+    });
+    return {
+      elements: updateFormattedTextLayout(elements, candidates, app, () => true),
+      captureUpdate: CaptureUpdateAction.IMMEDIATELY
+    };
+  }
+  const clearedTextIds = new Set();
+  const candidates = changeProperty(elements, appState, (element) => {
+    if (!hasStrokeColor(element.type)) return element;
+    if (isTextElement(element) && Array.isArray(element.textRuns) && element.textRuns.some(run => run?.style?.color)) {
+      clearedTextIds.add(element.id);
+      return newElementWith(element, { strokeColor: color, textRuns: clearStyleOverrides(element, { color }) });
+    }
+    return newElementWith(element, { strokeColor: color });
+  }, true);
+  return {
+    elements: clearedTextIds.size
+      ? updateFormattedTextLayout(elements, candidates, app, element => clearedTextIds.has(element.id))
+      : candidates,
+    appState: { ...appState, ...value },
+    captureUpdate: CaptureUpdateAction.IMMEDIATELY
+  };
+}
+
 function changeTextFormatting(elements, appState, change, app) {
   const editor = activeTextEditors.get(app);
   const edited = app.scene.getElement(appState.editingTextElement?.id);
@@ -522,34 +638,9 @@ function changeTextFormatting(elements, appState, change, app) {
       JSON.stringify(runs) === JSON.stringify(element.textRuns ?? [])) return element;
     return newElementWith(element, { textFormatting: next, ...(element.textRuns?.length ? { textRuns: runs } : {}) });
   }, true);
-  const updated = arrayToMap(candidates);
-  let changed = false;
-  candidates.forEach((element, index) => {
-    const previous = elements[index];
-    if (previous === element) return;
-    changed = true;
-    if (change.weight !== undefined || change.italic !== undefined) {
-      const container = app.scene.getContainerElement(previous);
-      // Work against a cloned container so undo captures the layout change.
-      const updatedContainer = container ? { ...updated.get(container.id) } : null;
-      redrawTextBoundingBox(element, updatedContainer, updated, false);
-      offsetElementAfterFontResize(previous, element);
-      if (container && updatedContainer && (container.width !== updatedContainer.width || container.height !== updatedContainer.height)) {
-        updated.set(container.id, newElementWith(container, {
-          width: updatedContainer.width, height: updatedContainer.height
-        }));
-      }
-    }
-  });
-  if (changed) {
-    for (const element of candidates) {
-      if (element !== app.scene.getElement(element.id) && isTextElement(element)) {
-        updateBoundElements(element, updated);
-      }
-    }
-  }
   return {
-    elements: changed ? elements.map(({ id }) => updated.get(id)) : elements,
+    elements: updateFormattedTextLayout(elements, candidates, app,
+      () => change.weight !== undefined || change.italic !== undefined),
     appState: {
       ...appState,
       currentItemTextFormatting: isPartial ? appState.currentItemTextFormatting : {
@@ -564,13 +655,37 @@ function changeTextFormatting(elements, appState, change, app) {
 
 function patchEditor(source: string, runsModule: string) {
   source =
-    `import { activeTextEditors, createBoardTextEditor, stylesInRange, setRangeStyle, clearStyleOverrides, moveTextRuns } from ${JSON.stringify(runsModule)};\n` +
+    `import { activeTextEditors, createBoardTextEditor, stylesInRange, setRangeStyle, clearStyleOverrides, moveTextRuns, isTextRunColor } from ${JSON.stringify(runsModule)};\n` +
     'import { getTextFormatting, getTextDecoration, hasNativeBoldFace } from "./chunk-4FTI6OG3.js";\n' +
     source;
   source = replace(
     source,
     "var actionChangeFontFamily = register({",
     controls + "var actionChangeFontFamily = register({",
+  );
+  const strokeActionStart = source.indexOf(
+    "var actionChangeStrokeColor = register({",
+  );
+  const strokeActionEnd = source.indexOf(
+    "var actionChangeBackgroundColor = register({",
+    strokeActionStart,
+  );
+  if (strokeActionStart === -1 || strokeActionEnd === -1) {
+    throw new Error("Could not find Excalidraw's stroke color action");
+  }
+  source = replace(
+    source,
+    source.slice(strokeActionStart, strokeActionEnd),
+    `var actionChangeStrokeColor = register({
+  name: "changeStrokeColor",
+  label: "labels.stroke",
+  trackEvent: false,
+  perform: (elements, appState, value, app) => value.currentItemStrokeColor
+    ? changeTextColor(elements, appState, value, app)
+    : { appState: { ...appState, ...value }, captureUpdate: CaptureUpdateAction.EVENTUALLY },
+  PanelComponent: TextAwareStrokePicker
+});
+`,
   );
   source = replace(
     source,
@@ -777,6 +892,29 @@ var actionChangeTextAlign`,
     source,
     `      if (target instanceof HTMLTextAreaElement) {`,
     `      if (target === editable) {`,
+  );
+  source = source.replaceAll(
+    'target instanceof HTMLElement && target.classList.contains("properties-trigger")',
+    'target instanceof Element && !!target.closest(".properties-trigger")',
+  );
+  source = replace(
+    source,
+    `    if ((event.target instanceof HTMLElement || event.target instanceof SVGElement) && event.target.closest(`,
+    `    if (target instanceof Element && target.closest(".color-picker-container, .color-picker-content")) {
+      editable.rememberSelection();
+      temporarilyDisableSubmit();
+      return;
+    }
+    if ((event.target instanceof HTMLElement || event.target instanceof SVGElement) && event.target.closest(`,
+  );
+  source = replace(
+    source,
+    `      if (!isPropertiesTrigger) {
+        editable.focus();
+      }`,
+    `      if (!isPropertiesTrigger && !document.activeElement?.closest(".color-picker-content")) {
+        editable.focus();
+      }`,
   );
   source = replace(
     source,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   boardTextLines,
+  clearStyleOverrides,
   moveTextRuns,
   setRangeStyle,
   wrapBoardText,
@@ -49,5 +50,30 @@ describe("board text runs", () => {
     expect(moveTextRuns(source, "one new two three", 4)).toEqual([
       { start: 4, end: 11, style: { weight: 700 } },
     ]);
+  });
+
+  it("changes and clears text colors independently of other formatting", () => {
+    const originalText = "Grüße";
+    const source = {
+      originalText,
+      textRuns: [{ start: 0, end: 5, style: { italic: true } }],
+    };
+    const textRuns = setRangeStyle(
+      source,
+      2,
+      3,
+      { color: "#1971c2" },
+      { ...base, color: "#1e1e1e" },
+    );
+    expect(boardTextLines({ originalText, textRuns }, originalText)[0]).toEqual(
+      [
+        { text: "Gr", style: { italic: true } },
+        { text: "ü", style: { italic: true, color: "#1971c2" } },
+        { text: "ße", style: { italic: true } },
+      ],
+    );
+    expect(
+      clearStyleOverrides({ originalText, textRuns }, { color: "#1e1e1e" }),
+    ).toEqual(source.textRuns);
   });
 });

@@ -113,7 +113,8 @@ function draw(element: Element): string {
                 .join(" ");
               const synth =
                 weight === 700 && font && !font.weights.includes(700);
-              return `<tspan font-weight="${synth ? 400 : weight}" font-style="${run.italic ? "italic" : "normal"}"${decoration ? ` text-decoration="${decoration}"` : ""}${synth ? ` stroke="${stroke}" stroke-width="${fontSize / 30}"` : ""}>${escape(piece.text)}</tspan>`;
+              const color = run.color === "transparent" ? "none" : run.color;
+              return `<tspan font-weight="${synth ? 400 : weight}" font-style="${run.italic ? "italic" : "normal"}"${decoration ? ` text-decoration="${decoration}"` : ""}${color ? ` fill="${color}"` : ""}${synth ? ` stroke="${color ?? stroke}" stroke-width="${fontSize / 30}"` : ""}>${escape(piece.text)}</tspan>`;
             })
             .join("");
           return `<text x="${x}" y="${baseline + index * lineHeight}"${family} font-size="${fontSize}" text-anchor="${align}" fill="${stroke}" xml:space="preserve">${body}</text>`;

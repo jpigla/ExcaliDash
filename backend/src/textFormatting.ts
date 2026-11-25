@@ -42,7 +42,15 @@ export const textRunsSchema = z
     z.object({
       start: z.number().int().nonnegative().max(200_000),
       end: z.number().int().positive().max(200_000),
-      style: textFormattingSchema,
+      style: textFormattingSchema.extend({
+        color: z
+          .string()
+          .regex(
+            /^(?:transparent|#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8}))$/i,
+          )
+          .transform((color) => color.toLowerCase())
+          .optional(),
+      }),
     }),
   )
   .max(200_000)
@@ -68,7 +76,7 @@ export function styledTextLines(
     while (index < runs.length && runs[index].end <= offset) index++;
     const pieces: {
       text: string;
-      style: z.infer<typeof textFormattingSchema>;
+      style: z.infer<typeof textRunsSchema>[number]["style"];
     }[] = [];
     let cursor = offset;
     for (let i = index; i < runs.length && runs[i].start < end; i++) {

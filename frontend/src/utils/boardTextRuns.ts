@@ -3,6 +3,7 @@ type TextStyle = {
   italic: boolean;
   underline: boolean;
   strikethrough: boolean;
+  color?: string;
 };
 type Overrides = Partial<TextStyle>;
 
@@ -17,8 +18,21 @@ type TextSource = {
 };
 type Segment = { text: string; style: Overrides };
 
-const styleKeys = ["weight", "italic", "underline", "strikethrough"] as const;
+const styleKeys = [
+  "weight",
+  "italic",
+  "underline",
+  "strikethrough",
+  "color",
+] as const;
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+export function isTextRunColor(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^(?:transparent|#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8}))$/i.test(value)
+  );
+}
 
 function normalizedStyle(style: Overrides | undefined): Overrides {
   const result: Overrides = {};
@@ -28,6 +42,7 @@ function normalizedStyle(style: Overrides | undefined): Overrides {
   for (const key of ["italic", "underline", "strikethrough"] as const) {
     if (typeof style?.[key] === "boolean") result[key] = style[key];
   }
+  if (isTextRunColor(style?.color)) result.color = style.color.toLowerCase();
   return result;
 }
 
@@ -267,6 +282,7 @@ type Editor = HTMLDivElement & {
   selectionEnd: number;
   select(): void;
   setSelectionRange(start: number, end: number): void;
+  rememberSelection(): void;
   renderRuns(source: TextSource, base: TextStyle): void;
   lastInputStart?: number;
   lastInputEnd?: number;
@@ -333,6 +349,9 @@ export function createBoardTextEditor(): Editor {
     selection?.addRange(range);
   };
   editor.select = () => editor.setSelectionRange(0, value().length);
+  editor.rememberSelection = () => {
+    offsets();
+  };
   Object.defineProperties(editor, {
     value: {
       get: value,
@@ -394,6 +413,7 @@ export function createBoardTextEditor(): Editor {
       span.textContent = part;
       span.style.fontWeight = String(effective.weight);
       span.style.fontStyle = effective.italic ? "italic" : "normal";
+      if (style.color) span.style.color = style.color;
       const decoration = [
         effective.underline && "underline",
         effective.strikethrough && "line-through",

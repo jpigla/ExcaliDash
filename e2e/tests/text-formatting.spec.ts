@@ -228,7 +228,7 @@ test("board fonts and formatting survive editing, save, and native export", asyn
   }
 });
 
-test("new font families render and embed the required faces in image exports", async ({
+test("new font families preserve individual text colors in image exports", async ({
   page,
   request,
 }) => {
@@ -272,6 +272,27 @@ test("new font families render and embed the required faces in image exports", a
       const formatted = editor.getByText("Grüße", { exact: true });
       await expect(formatted).toHaveCSS("font-style", "italic");
       await expect(formatted).toHaveCSS("font-weight", "700");
+      await page.getByRole("button", { name: "Selected text color" }).click();
+      await page.locator(".color-picker-input").fill("b00022");
+      await expect(formatted).toHaveCSS("color", "rgb(176, 0, 34)");
+      await page.locator(".color-picker-content").press("Escape");
+      await expect(page.locator(".color-picker-content")).toBeHidden();
+      await editor.focus();
+      await editor.evaluate((element) => {
+        document
+          .getSelection()!
+          .setBaseAndExtent(
+            element.firstChild!.firstChild!,
+            1,
+            element.firstChild!.firstChild!,
+            2,
+          );
+      });
+      await page.getByTestId("color-top-pick-#1971c2").click();
+      await expect(editor.getByText("r", { exact: true })).toHaveCSS(
+        "color",
+        "rgb(25, 113, 194)",
+      );
       const faces = await page.evaluate(
         async ({ name, sample }) => {
           const faces = await document.fonts.load(
@@ -329,6 +350,10 @@ test("new font families render and embed the required faces in image exports", a
           boldItalic: Boolean(
             text.querySelector('tspan[font-weight="700"][font-style="italic"]'),
           ),
+          colors: [...text.querySelectorAll("tspan[fill]")].map((span) => [
+            span.textContent,
+            span.getAttribute("fill"),
+          ]),
         })),
       };
     }, svg);
@@ -347,6 +372,11 @@ test("new font families render and embed the required faces in image exports", a
         family: name,
         text: sample,
         boldItalic: true,
+        colors: [
+          ["G", "#b00022"],
+          ["r", "#1971c2"],
+          ["üße", "#b00022"],
+        ],
       });
     }
     const pngDownload = page.waitForEvent("download", { timeout: 15_000 });
@@ -362,11 +392,27 @@ test("new font families render and embed the required faces in image exports", a
       context.drawImage(image, 0, 0);
       const { data } = context.getImageData(0, 0, width, height);
       const bands: number[][] = [];
+      const redRows: number[] = [];
+      const blueRows: number[] = [];
       let lastInkRow = -Infinity;
       for (let y = 0; y < height; y++) {
         let ink = 0;
         for (let x = 0; x < width; x++) {
           const offset = (y * width + x) * 4;
+          if (
+            data[offset] === 176 &&
+            data[offset + 1] === 0 &&
+            data[offset + 2] === 34 &&
+            data[offset + 3] === 255
+          )
+            redRows.push(y);
+          if (
+            data[offset] === 25 &&
+            data[offset + 1] === 113 &&
+            data[offset + 2] === 194 &&
+            data[offset + 3] === 255
+          )
+            blueRows.push(y);
           if (data[offset + 3] > 128 && data[offset] < 128) ink++;
         }
         if (!ink) continue;
@@ -374,10 +420,19 @@ test("new font families render and embed the required faces in image exports", a
         bands.at(-1)!.push(ink);
         lastInkRow = y;
       }
-      return bands;
+      const countBands = (rows: number[]) =>
+        rows.filter((y, index) => index === 0 || y - rows[index - 1] > 10)
+          .length;
+      return {
+        bands,
+        redBands: countBands(redRows),
+        blueBands: countBands(blueRows),
+      };
     }, png.toString("base64"));
-    expect(inkBands).toHaveLength(families.length);
-    expect(new Set(inkBands.map((band) => band.join(","))).size).toBe(
+    expect(inkBands.bands).toHaveLength(families.length);
+    expect(inkBands.redBands).toBe(families.length);
+    expect(inkBands.blueBands).toBe(families.length);
+    expect(new Set(inkBands.bands.map((band) => band.join(","))).size).toBe(
       families.length,
     );
   } finally {

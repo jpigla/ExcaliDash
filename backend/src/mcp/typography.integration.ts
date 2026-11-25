@@ -122,9 +122,20 @@ it("renders selectively styled words in MCP previews and preserves SVG spans", (
     textRuns: [{ start: 6, end: 10, style: { weight: 700, underline: true } }],
   };
   expect(renderScene([rich]).data).not.toBe(renderScene([plain]).data);
+  const colored = {
+    ...rich,
+    textRuns: [
+      {
+        start: 6,
+        end: 10,
+        style: { weight: 700, underline: true, color: "#b00022" },
+      },
+    ],
+  };
+  expect(renderScene([colored]).data).not.toBe(renderScene([rich]).data);
   expect(
     sanitizeSvg(
-      '<svg xmlns="http://www.w3.org/2000/svg"><text xml:space="preserve">First <tspan text-decoration="underline">word</tspan></text></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg"><text xml:space="preserve">First <tspan text-decoration="underline" fill="#b00022">word</tspan></text></svg>',
     ),
-  ).toContain('<tspan text-decoration="underline">word</tspan>');
+  ).toContain('<tspan text-decoration="underline" fill="#b00022">word</tspan>');
 });

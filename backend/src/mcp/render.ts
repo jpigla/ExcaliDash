@@ -1,6 +1,11 @@
 import { Resvg } from "@resvg/resvg-js";
 import { type Element } from "./elements";
 import type { SceneBounds } from "../server/sceneBounds";
+import {
+  boardFontById,
+  boardFontFiles,
+  textFormattingSchema,
+} from "../textFormatting";
 
 const escape = (value: string) =>
   value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "").replace(
@@ -34,6 +39,9 @@ function points(element: Element): [number, number][] {
     );
 }
 
+const fallbackFamily =
+  process.platform === "darwin" ? "Helvetica" : "DejaVu Sans";
+
 function draw(element: Element): string {
   const width = Math.max(0, number(element.width));
   const height = Math.max(0, number(element.height));
@@ -50,11 +58,51 @@ function draw(element: Element): string {
       typeof element.text === "string"
         ? element.text.slice(0, 2000).split("\n").slice(0, 60)
         : [];
+    const font = boardFontById.get(Number(element.fontFamily));
+    const parsed = textFormattingSchema.safeParse(element.textFormatting);
+    const format = parsed.success ? parsed.data : {};
+    const weight =
+      format.weight === 300 && !font?.weights.includes(300)
+        ? 400
+        : (format.weight ?? 400);
+    const decoration = [
+      format.underline && "underline",
+      format.strikethrough && "line-through",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const align =
+      element.textAlign === "center"
+        ? "middle"
+        : element.textAlign === "right"
+          ? "end"
+          : "start";
+    const x = align === "middle" ? width / 2 : align === "end" ? width : 0;
+    const lineHeight =
+      fontSize * number(element.lineHeight, font?.metrics.lineHeight ?? 1.25);
+    const baseline = font
+      ? lineHeight / 2 +
+        (fontSize * (font.metrics.ascender + font.metrics.descender)) /
+          (2 * font.metrics.unitsPerEm)
+      : fontSize;
+    const family = font
+      ? ` font-family="${escape(font.name)}, ${fallbackFamily}"`
+      : "";
+    // Resvg selects real faces when available. Emulate oblique and missing
+    // bold cuts because its SVG renderer has no browser font synthesis.
+    const syntheticBold = weight === 700 && font && !font.weights.includes(700);
+    const bold = syntheticBold
+      ? ` stroke="${stroke}" stroke-width="${fontSize / 30}"`
+      : "";
     return lines
-      .map(
-        (line, index) =>
-          `<text x="0" y="${fontSize * (1 + index * number(element.lineHeight, 1.25))}" font-size="${fontSize}" fill="${stroke}">${escape(line)}</text>`,
-      )
+      .map((line, index) => {
+        const y = baseline + index * lineHeight;
+        const tilt = format.italic
+          ? ` transform="translate(${y * 0.22} 0) skewX(-12.4074)"`
+          : "";
+        const mode = decoration ? ` text-decoration="${decoration}"` : "";
+        return `<text x="${x}" y="${y}"${family} font-size="${fontSize}" text-anchor="${align}" font-weight="${syntheticBold ? 400 : weight}" fill="${stroke}"${bold}${mode}${tilt}>${escape(line)}</text>`;
+      })
       .join("");
   }
   if (["arrow", "line", "freedraw"].includes(element.type)) {
@@ -150,8 +198,8 @@ export function renderScene(elements: Element[], bounds?: SceneBounds) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.max(1, Math.ceil(width * scale))}" height="${Math.max(1, Math.ceil(height * scale))}" viewBox="${x} ${y} ${width} ${height}"><rect x="${x}" y="${y}" width="${width}" height="${height}" fill="white"/>${geometry.join("")}</svg>`;
   const png = new Resvg(svg, {
     font: {
-      defaultFontFamily:
-        process.platform === "darwin" ? "Helvetica" : "DejaVu Sans",
+      defaultFontFamily: fallbackFamily,
+      fontFiles: boardFontFiles,
     },
   })
     .render()

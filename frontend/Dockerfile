@@ -12,6 +12,7 @@ RUN npm ci && npm cache clean --force
 # Copy source code and config files
 COPY frontend/ ./
 COPY VERSION ../VERSION
+COPY backend/assets/board-fonts/catalog.json ../backend/assets/board-fonts/catalog.json
 
 # Build arguments
 ARG VITE_APP_BUILD_LABEL

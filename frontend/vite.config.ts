@@ -2,7 +2,29 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import fs from "fs";
 import path from "path";
-import { excalidrawZoom, excalidrawZoomForOptimizer } from "./excalidrawZoom";
+import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
+import { excalidrawZoom } from "./excalidrawZoom";
+import { excalidrawTypography } from "./excalidrawTypography";
+
+const require = createRequire(import.meta.url);
+const editorBundle = require
+  .resolve("@excalidraw/excalidraw")
+  .replace(/prod[/\\]index\.js$/, "dev/index.js");
+const fontCatalog = JSON.parse(
+  fs.readFileSync(
+    path.resolve(__dirname, "../backend/assets/board-fonts/catalog.json"),
+    "utf8",
+  ),
+);
+// The optimizer otherwise reuses its cached bundles after a patch-only edit.
+const typographyRevision = createHash("sha256")
+  .update(fs.readFileSync(path.resolve(__dirname, "excalidrawTypography.ts")))
+  .update(fs.readFileSync(path.resolve(__dirname, "excalidrawZoom.ts")))
+  .update(JSON.stringify(fontCatalog))
+  .digest("hex")
+  .slice(0, 12);
+const typography = excalidrawTypography(fontCatalog, typographyRevision);
 
 const versionFilePath = path.resolve(__dirname, "../VERSION");
 const appVersion = fs.readFileSync(versionFilePath, "utf8").trim();
@@ -26,7 +48,10 @@ export default defineConfig(({ command }) => {
   };
 
   return {
-    plugins: [react(), excalidrawZoom],
+    plugins: [react(), excalidrawZoom, typography.vite],
+    resolve: {
+      alias: [{ find: /^@excalidraw\/excalidraw$/, replacement: editorBundle }],
+    },
     define: {
       ...processEnvDefines,
       "import.meta.env.VITE_APP_VERSION": JSON.stringify(appVersion),
@@ -36,7 +61,7 @@ export default defineConfig(({ command }) => {
       esbuildOptions: {
         define: processEnvDefines,
         target: "es2022",
-        plugins: [excalidrawZoomForOptimizer],
+        plugins: [typography.optimizer],
       },
     },
     build: {

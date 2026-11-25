@@ -1,0 +1,11 @@
+The bundled board fonts are from Google Fonts, revision
+6ebe737e44fd64ee736bbc6feed6136a6dbfd222.
+https://github.com/google/fonts/tree/6ebe737e44fd64ee736bbc6feed6136a6dbfd222
+
+Kalam, Patrick Hand, Redacted Script, Indie Flower and Gochi Hand are
+distributed under the SIL Open Font License 1.1. Luckiest Guy and
+Schoolbell are distributed under the Apache License 2.0. The unmodified
+upstream copyright and license files are included for each family.
+
+ExcaliDash repackaged the upstream TrueType files as WOFF2 for web
+delivery. The original TrueType files are used for server rendering.

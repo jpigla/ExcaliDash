@@ -1,5 +1,18 @@
 import { z } from "zod";
 import { id, sha256 } from "./policy";
+import { boardFonts, textFormattingSchema } from "../textFormatting";
+
+const fontFamilies = new Set([
+  1,
+  2,
+  3,
+  5,
+  6,
+  7,
+  8,
+  9,
+  ...boardFonts.map(({ id }) => id),
+]);
 
 const coord = z.number().min(-100_000).max(100_000);
 const extent = z.number().min(1).max(10_000);
@@ -14,6 +27,19 @@ const visual = {
   strokeWidth: z.number().min(1).max(8).optional(),
   text: z.string().max(2000).optional(),
   fontSize: z.number().int().min(12).max(96).optional(),
+  fontFamily: z
+    .number()
+    .int()
+    .refine((font) => fontFamilies.has(font))
+    .describe(
+      `Text only. Built-in Excalidraw font ID or ${boardFonts.map(({ id, name }) => `${id} (${name})`).join(", ")}.`,
+    )
+    .optional(),
+  textFormatting: textFormattingSchema
+    .describe(
+      "Text only. Lightweight (300) applies to Kalam and Redacted Script. All families support regular (400), bold (700), italic, underline and strikethrough.",
+    )
+    .optional(),
 };
 const add = z.strictObject({
   ...visual,

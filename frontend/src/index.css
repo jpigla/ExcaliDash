@@ -247,3 +247,46 @@ html.dark body {
 .dark .drawing-preview [data-preview-raster="true"] {
   filter: invert(100%) hue-rotate(180deg) saturate(1.25);
 }
+
+.excalidraw .excalidash-text-formatting {
+  display: grid;
+  gap: 0.25rem;
+  margin-top: 0.375rem;
+}
+
+.excalidraw .excalidash-text-formatting select {
+  max-width: 100%;
+  min-height: 1.75rem;
+  border: 1px solid var(--default-border-color);
+  border-radius: 0.375rem;
+  background: var(--island-bg-color);
+  color: var(--text-primary-color);
+  font: inherit;
+}
+
+.excalidraw .excalidash-text-formatting-buttons {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.25rem;
+}
+
+.excalidraw .excalidash-text-formatting-buttons button {
+  cursor: pointer;
+  min-height: 1.75rem;
+  padding: 0.125rem;
+  border: 1px solid var(--default-border-color);
+  border-radius: 0.375rem;
+  background: var(--button-bg);
+  color: var(--text-primary-color);
+}
+
+.excalidraw .excalidash-text-formatting-buttons button:hover,
+.excalidraw .excalidash-text-formatting-buttons button[aria-pressed="true"],
+.excalidraw .excalidash-text-formatting-buttons button[aria-pressed="mixed"] {
+  background: var(--button-hover-bg);
+}
+
+.excalidraw .excalidash-text-formatting-buttons button[aria-pressed="true"],
+.excalidraw .excalidash-text-formatting-buttons button[aria-pressed="mixed"] {
+  border-color: var(--color-primary);
+}

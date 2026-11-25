@@ -106,6 +106,29 @@ describe("guest Socket.IO packet limits", () => {
     ]);
   });
 
+  it("relays font family and formatting changes from guest editors", () => {
+    const guard = createGuestSocketPacketGuard(drawingId);
+    const formatted = {
+      ...rectangle,
+      type: "text",
+      text: "Grüße",
+      originalText: "Grüße",
+      fontFamily: 101,
+      fontSize: 20,
+      textAlign: "left",
+      verticalAlign: "top",
+      lineHeight: 1.59,
+      textFormatting: {
+        weight: 700,
+        italic: true,
+        underline: true,
+        strikethrough: true,
+      },
+    };
+    const packet = ["element-update", { drawingId, elements: [formatted] }];
+    expect(guard(packet)).toEqual(packet);
+  });
+
   it("bounds event bursts and allows normal traffic again in the next window", () => {
     vi.useFakeTimers();
     const guard = createGuestSocketPacketGuard(drawingId);

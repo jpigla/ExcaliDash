@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { sanitizeElementText } from "../security";
+import { boardFontById, textFormattingSchema } from "../textFormatting";
 import { elementTypes, type NewElement, type Operation } from "./changeInput";
 
 export type Element = Record<string, unknown> & {
@@ -79,10 +80,16 @@ export function summarize(element: Element) {
     backgroundColor,
     locked,
     angle,
+    ...(type === "text"
+      ? {
+          fontFamily: element.fontFamily,
+          textFormatting: element.textFormatting,
+        }
+      : {}),
   };
 }
 
-function textGeometry(text: string, fontSize: number) {
+function textGeometry(text: string, fontSize: number, lineHeight: number) {
   const lines = text.split("\n");
   return {
     width: Math.max(
@@ -93,8 +100,19 @@ function textGeometry(text: string, fontSize: number) {
           0.6,
       ),
     ),
-    height: lines.length * fontSize * 1.25,
+    height: lines.length * fontSize * lineHeight,
   };
+}
+
+function normalizeTextFormatting(fontFamily: number, input: unknown) {
+  const result = textFormattingSchema.safeParse(input);
+  const format = result.success ? result.data : {};
+  if (
+    format.weight === 300 &&
+    !boardFontById.get(fontFamily)?.weights.includes(300)
+  )
+    format.weight = 400;
+  return format;
 }
 
 function newElement(input: NewElement, frameId?: string): Element {
@@ -112,7 +130,16 @@ function newElement(input: NewElement, frameId?: string): Element {
   }
   const text = sanitizeElementText(input.text ?? "");
   const fontSize = input.fontSize ?? 20;
-  const metrics = textGeometry(text, fontSize);
+  if (
+    input.type !== "text" &&
+    (input.fontFamily !== undefined || input.textFormatting !== undefined)
+  )
+    throw new BoardError(
+      "Font family and text formatting require a text element.",
+    );
+  const fontFamily = input.fontFamily ?? 5;
+  const lineHeight = boardFontById.get(fontFamily)?.metrics.lineHeight ?? 1.25;
+  const metrics = textGeometry(text, fontSize, lineHeight);
   const element: Element = {
     id: randomUUID(),
     type: input.type,
@@ -154,8 +181,16 @@ function newElement(input: NewElement, frameId?: string): Element {
       text,
       originalText: text,
       fontSize,
-      fontFamily: 5,
-      lineHeight: 1.25,
+      fontFamily,
+      lineHeight,
+      ...(input.textFormatting
+        ? {
+            textFormatting: normalizeTextFormatting(
+              fontFamily,
+              input.textFormatting,
+            ),
+          }
+        : {}),
       textAlign: "left",
       verticalAlign: "top",
       containerId: null,
@@ -258,7 +293,8 @@ export function changeElements(
       throw new BoardError("Element unavailable for editing.");
     }
     if (item.op === "update") {
-      const { text, fontSize, ...patch } = item.changes;
+      const { text, fontSize, fontFamily, textFormatting, ...patch } =
+        item.changes;
       if (!elementTypes.has(before.type as NewElement["type"]))
         throw new BoardError("Element type is read-only.");
       const geometry = ["x", "y", "width", "height"].some(
@@ -273,17 +309,42 @@ export function changeElements(
           "Resize or move bound elements and resize lines in the editor.",
         );
       }
-      if (text !== undefined || fontSize !== undefined) {
-        if (before.type === "frame" && fontSize === undefined) {
+      const typographyChanged =
+        fontFamily !== undefined || textFormatting !== undefined;
+      if (text !== undefined || fontSize !== undefined || typographyChanged) {
+        if (
+          before.type === "frame" &&
+          fontSize === undefined &&
+          !typographyChanged
+        ) {
           Object.assign(patch, { name: sanitizeElementText(text ?? "") });
         } else if (before.type === "text" && !before.containerId) {
           const value = sanitizeElementText(text ?? String(before.text ?? ""));
           const size = fontSize ?? numeric(before.fontSize, 20);
+          const family = fontFamily ?? numeric(before.fontFamily, 5);
+          const lineHeight =
+            fontFamily !== undefined
+              ? (boardFontById.get(family)?.metrics.lineHeight ?? 1.25)
+              : numeric(before.lineHeight, 1.25);
+          const previous = normalizeTextFormatting(
+            numeric(before.fontFamily, 5),
+            before.textFormatting,
+          );
           Object.assign(patch, {
             text: value,
             originalText: value,
             fontSize: size,
-            ...textGeometry(value, size),
+            fontFamily: family,
+            lineHeight,
+            ...(typographyChanged
+              ? {
+                  textFormatting: normalizeTextFormatting(family, {
+                    ...previous,
+                    ...textFormatting,
+                  }),
+                }
+              : {}),
+            ...textGeometry(value, size, lineHeight),
             autoResize: true,
           });
         } else {

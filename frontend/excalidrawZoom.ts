@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-import type { Plugin as EsbuildPlugin } from "esbuild";
 import type { Plugin as VitePlugin } from "vite";
 
 // Excalidraw 0.18.1 exposes no minimum-zoom option. Patch its locked bundles
@@ -39,7 +37,7 @@ function patchZoomActions(
   );
 }
 
-function patchZoom(source: string, bundle: string) {
+export function patchZoom(source: string, bundle: string) {
   if (bundle.endsWith("chunk-4FTI6OG3")) {
     return replaceOnce(source, "var MIN_ZOOM = 0.1;", "var MIN_ZOOM = 0.01;");
   }
@@ -66,15 +64,5 @@ export const excalidrawZoom: VitePlugin = {
   transform(source, id) {
     const match = bundles.exec(id);
     if (match) return patchZoom(source, match[1]);
-  },
-};
-
-export const excalidrawZoomForOptimizer: EsbuildPlugin = {
-  name: excalidrawZoom.name,
-  setup(build) {
-    build.onLoad({ filter: bundles }, async ({ path }) => ({
-      contents: patchZoom(await readFile(path, "utf8"), bundles.exec(path)![1]),
-      loader: "js",
-    }));
   },
 };

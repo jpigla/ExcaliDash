@@ -1,0 +1,86 @@
+[
+  {
+    "id": 101,
+    "name": "Kalam",
+    "slug": "kalam",
+    "weights": [300, 400, 700],
+    "metrics": {
+      "unitsPerEm": 1000,
+      "ascender": 1063,
+      "descender": -531,
+      "lineHeight": 1.59
+    }
+  },
+  {
+    "id": 102,
+    "name": "Luckiest Guy",
+    "slug": "luckiest-guy",
+    "weights": [400],
+    "metrics": {
+      "unitsPerEm": 2048,
+      "ascender": 1440,
+      "descender": -608,
+      "lineHeight": 1.2
+    }
+  },
+  {
+    "id": 103,
+    "name": "Patrick Hand",
+    "slug": "patrick-hand",
+    "weights": [400],
+    "metrics": {
+      "unitsPerEm": 1000,
+      "ascender": 1042,
+      "descender": -312,
+      "lineHeight": 1.35
+    }
+  },
+  {
+    "id": 104,
+    "name": "Redacted Script",
+    "slug": "redacted-script",
+    "weights": [300, 400, 700],
+    "metrics": {
+      "unitsPerEm": 1000,
+      "ascender": 800,
+      "descender": -200,
+      "lineHeight": 1.2
+    }
+  },
+  {
+    "id": 105,
+    "name": "Indie Flower",
+    "slug": "indie-flower",
+    "weights": [400],
+    "metrics": {
+      "unitsPerEm": 1000,
+      "ascender": 971,
+      "descender": -488,
+      "lineHeight": 1.46
+    }
+  },
+  {
+    "id": 106,
+    "name": "Gochi Hand",
+    "slug": "gochi-hand",
+    "weights": [400],
+    "metrics": {
+      "unitsPerEm": 2048,
+      "ascender": 1579,
+      "descender": -835,
+      "lineHeight": 1.2
+    }
+  },
+  {
+    "id": 107,
+    "name": "Schoolbell",
+    "slug": "schoolbell",
+    "weights": [400],
+    "metrics": {
+      "unitsPerEm": 1024,
+      "ascender": 1019,
+      "descender": -383,
+      "lineHeight": 1.39
+    }
+  }
+]

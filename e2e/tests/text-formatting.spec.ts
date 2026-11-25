@@ -81,17 +81,33 @@ test("board fonts and formatting survive editing, save, and native export", asyn
     await expect(format.getByRole("button")).toHaveCount(4);
     await expect(format.getByRole("combobox")).toHaveCount(0);
 
+    const accent = await format.evaluate((row) => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--color-primary)";
+      row.append(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    });
+    await fontTrigger.hover();
+    for (const name of ["Bold", "Italic", "Underline", "Strikethrough"]) {
+      const button = format.getByRole("button", { name });
+      await expect(button).toHaveAttribute("aria-pressed", "false");
+      await expect(button).not.toHaveCSS("border-top-color", accent);
+      await button.hover();
+      await expect(button).toHaveCSS("border-top-color", accent);
+      await button.click();
+      await expect(button).toHaveAttribute("aria-pressed", "true");
+      await expect(button).toHaveCSS("border-top-color", accent);
+      await fontTrigger.hover();
+      await expect(button).toHaveCSS("border-top-color", accent);
+    }
     const bold = format.getByRole("button", { name: "Bold" });
-    await bold.click();
-    await expect(bold).toHaveAttribute("aria-pressed", "true");
     await bold.click();
     await expect
       .poll(async () => (await sceneText())?.textFormatting?.weight)
       .toBe(400);
     await bold.click();
-    await format.getByRole("button", { name: "Italic" }).click();
-    await format.getByRole("button", { name: "Underline" }).click();
-    await format.getByRole("button", { name: "Strikethrough" }).click();
     await expect.poll(sceneText).toMatchObject({
       fontFamily: 101,
       textFormatting: {

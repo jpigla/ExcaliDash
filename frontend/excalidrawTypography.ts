@@ -473,15 +473,17 @@ function TextFormattingControls({ elements, appState, app, selectedFontFamily, u
     onClick: () => set(property, all(property, value) ? off : value),
     children: letter
   }, property);
-  const formatting = german ? "Textformatierung" : "Text formatting";
-  return jsxs20("div", { className: "FontPicker__container excalidash-text-formatting", role: "group", "aria-label": formatting, children: [
-    jsxs20("div", { className: "buttonList", children: [
-      toggle("weight", 700, german ? "Fett" : "Bold", german ? "F" : "B", 400, { fontWeight: 700 }),
-      toggle("italic", true, german ? "Kursiv" : "Italic", "I", false, { fontStyle: "italic" }),
-      toggle("underline", true, german ? "Unterstrichen" : "Underline", "U", false, { textDecoration: "underline" })
-    ] }),
-    jsx34(ButtonSeparator, {}),
-    jsx34("div", { children: toggle("strikethrough", true, german ? "Durchgestrichen" : "Strikethrough", "S", false, { textDecoration: "line-through" }, "standalone") })
+  return jsxs20("fieldset", { children: [
+    jsx34("legend", { children: german ? "Textformatierung" : "Text formatting" }),
+    jsxs20("div", { className: "FontPicker__container excalidash-text-formatting", children: [
+      jsxs20("div", { className: "buttonList", children: [
+        toggle("weight", 700, german ? "Fett" : "Bold", german ? "F" : "B", 400, { fontWeight: 700 }),
+        toggle("italic", true, german ? "Kursiv" : "Italic", "I", false, { fontStyle: "italic" }),
+        toggle("underline", true, german ? "Unterstrichen" : "Underline", "U", false, { textDecoration: "underline" })
+      ] }),
+      jsx34(ButtonSeparator, {}),
+      jsx34("div", { children: toggle("strikethrough", true, german ? "Durchgestrichen" : "Strikethrough", "S", false, { textDecoration: "line-through" }, "standalone") })
+    ] })
   ] });
 }
 
@@ -616,6 +618,14 @@ function patchEditor(source: string, runsModule: string) {
   );
   source = replace(
     source,
+    `    return /* @__PURE__ */ jsxs20("fieldset", { children: [
+      /* @__PURE__ */ jsx34("legend", { children: t("labels.fontFamily") }),`,
+    `    return jsxs20(Fragment4, { children: [
+      jsxs20("fieldset", { children: [
+        jsx34("legend", { children: t("labels.fontFamily") }),`,
+  );
+  source = replace(
+    source,
     `            }
           }
         }
@@ -627,7 +637,8 @@ var actionChangeTextAlign`,
     `            }
           }
         }
-      ),
+        )
+      ] }),
       jsx34(TextFormattingControls, { elements, appState, app, selectedFontFamily, updateData })
     ] });
   }

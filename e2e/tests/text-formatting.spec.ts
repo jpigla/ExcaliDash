@@ -41,6 +41,16 @@ test("board fonts and formatting survive editing, save, and native export", asyn
       has: fontTrigger,
     });
     const format = page.getByRole("group", { name: "Text formatting" });
+    await expect(format.locator(":scope > legend")).toHaveText(
+      "Text formatting",
+    );
+    expect(
+      await format.evaluate(
+        (section) =>
+          section.previousElementSibling?.querySelector(":scope > legend")
+            ?.textContent,
+      ),
+    ).toBe("Font family");
     const buttonRects = (row: typeof format) =>
       row.getByRole("button").evaluateAll((buttons) =>
         buttons.map((button) => {

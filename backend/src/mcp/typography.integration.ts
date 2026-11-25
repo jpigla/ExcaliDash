@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { sanitizeSvg } from "../security";
-import { boardFonts } from "../textFormatting";
+import { boardFonts, textFormattingSchema } from "../textFormatting";
 import { changeElements, summarize } from "./elements";
 import { renderScene } from "./render";
 
@@ -33,7 +33,7 @@ it("renders real cuts, synthesized styles, and decorations in MCP PNGs", () => {
   expect(images).not.toContain(blank);
 
   const regular = render(101);
-  expect(render(101, { weight: 300 })).not.toBe(regular);
+  expect(textFormattingSchema.safeParse({ weight: 300 }).success).toBe(false);
   expect(render(101, { weight: 700 })).not.toBe(regular);
   for (const format of [
     { italic: true },
@@ -70,7 +70,7 @@ it("updates one formatting field without resetting the others", () => {
           type: "text",
           text: "Example",
           fontFamily: 101,
-          textFormatting: { weight: 300, italic: true },
+          textFormatting: { weight: 700, italic: true },
           x: 0,
           y: 0,
         },
@@ -89,7 +89,7 @@ it("updates one formatting field without resetting the others", () => {
   ).elements;
   expect(after).toMatchObject({
     fontFamily: 101,
-    textFormatting: { weight: 300, italic: true, underline: true },
+    textFormatting: { weight: 700, italic: true, underline: true },
   });
 });
 

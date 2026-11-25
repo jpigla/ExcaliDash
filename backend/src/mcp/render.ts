@@ -63,10 +63,7 @@ function draw(element: Element): string {
     const font = boardFontById.get(Number(element.fontFamily));
     const parsed = textFormattingSchema.safeParse(element.textFormatting);
     const format = parsed.success ? parsed.data : {};
-    const weight =
-      format.weight === 300 && !font?.weights.includes(300)
-        ? 400
-        : (format.weight ?? 400);
+    const weight = format.weight ?? 400;
     const decoration = [
       format.underline && "underline",
       format.strikethrough && "line-through",
@@ -107,10 +104,7 @@ function draw(element: Element): string {
           const body = pieces
             .map((piece) => {
               const run = { ...format, ...piece.style };
-              const weight =
-                run.weight === 300 && !font?.weights.includes(300)
-                  ? 400
-                  : (run.weight ?? 400);
+              const weight = run.weight ?? 400;
               const decoration = [
                 run.underline && "underline",
                 run.strikethrough && "line-through",

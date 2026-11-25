@@ -70,6 +70,7 @@ const buildEmptyScene = () => ({
   appState: {
     viewBackgroundColor: "#ffffff",
     gridSize: null,
+    objectsSnapModeEnabled: true,
     collaborators: new Map(),
   },
   files: {},
@@ -208,6 +209,7 @@ export const useEditorSceneLoader = ({
         const persistedAppState = getPersistedAppState(data.appState || {});
         const hydratedAppState = {
           ...persistedAppState,
+          objectsSnapModeEnabled: true,
           collaborators: new Map(),
         };
         refs.latestAppState.current = hydratedAppState;

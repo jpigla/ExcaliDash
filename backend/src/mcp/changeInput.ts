@@ -37,7 +37,7 @@ const visual = {
     .optional(),
   textFormatting: textFormattingSchema
     .describe(
-      "Text only. Lightweight (300) applies to Kalam and Redacted Script. All families support regular (400), bold (700), italic, underline and strikethrough.",
+      "Text only. Weight 400 is regular and 700 is bold. Italic, underline and strikethrough are boolean flags.",
     )
     .optional(),
 };

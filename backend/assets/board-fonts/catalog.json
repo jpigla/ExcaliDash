@@ -82,5 +82,56 @@
       "descender": -383,
       "lineHeight": 1.39
     }
+  },
+  {
+    "id": 108,
+    "name": "Montserrat",
+    "slug": "montserrat",
+    "weights": [400, 700],
+    "italic": true,
+    "metrics": {
+      "unitsPerEm": 1000,
+      "ascender": 968,
+      "descender": -251,
+      "lineHeight": 1.22
+    }
+  },
+  {
+    "id": 109,
+    "name": "Manrope",
+    "slug": "manrope",
+    "weights": [400, 700],
+    "metrics": {
+      "unitsPerEm": 2000,
+      "ascender": 2132,
+      "descender": -600,
+      "lineHeight": 1.37
+    }
+  },
+  {
+    "id": 110,
+    "name": "Roboto",
+    "slug": "roboto",
+    "weights": [400, 700],
+    "italic": true,
+    "metrics": {
+      "unitsPerEm": 2048,
+      "ascender": 1900,
+      "descender": -500,
+      "lineHeight": 1.2
+    }
+  },
+  {
+    "id": 111,
+    "name": "JetBrains Mono",
+    "slug": "jetbrains-mono",
+    "weights": [400, 700],
+    "italic": true,
+    "metrics": {
+      "unitsPerEm": 1000,
+      "ascender": 1020,
+      "descender": -300,
+      "lineHeight": 1.32
+    }
   }
 ]

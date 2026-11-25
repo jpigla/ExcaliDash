@@ -8,6 +8,7 @@ type FontCatalog = ReadonlyArray<{
   name: string;
   slug: string;
   weights: number[];
+  italic?: boolean;
   metrics: {
     unitsPerEm: number;
     ascender: number;
@@ -15,6 +16,17 @@ type FontCatalog = ReadonlyArray<{
     lineHeight: number;
   };
 }>;
+
+function boardFontFaces({ slug, weights, italic }: FontCatalog[number]) {
+  const styles = italic ? ["normal", "italic"] : ["normal"];
+  return weights.flatMap((weight) =>
+    styles.map((style) => ({
+      weight,
+      style,
+      file: `${slug}-${weight}${style === "italic" ? "-italic" : ""}.woff2`,
+    })),
+  );
+}
 
 // Use the readable distribution of the pinned Excalidraw version in both builds.
 // Require the expected source at every integration point on dependency upgrades.
@@ -34,13 +46,17 @@ function replace(source: string, original: string, replacement: string) {
 }
 
 function patchCore(source: string, catalog: FontCatalog, runsModule: string) {
+  const fonts = catalog.map((font) => ({
+    ...font,
+    faces: boardFontFaces(font),
+  }));
   source =
     `import { boardTextLines, wrapBoardText, safeTextRuns } from ${JSON.stringify(runsModule)};\n` +
     source;
   source = replace(
     source,
     "var FONT_FAMILY = {",
-    `var boardFonts = ${JSON.stringify(catalog)};
+    `var boardFonts = ${JSON.stringify(fonts)};
 var hasNativeBoldFace = (family) => boardFonts.some((font) => font.id === family && font.weights.includes(700));
 var getTextFormatting = (element) => {
   const format = element?.textFormatting;
@@ -108,41 +124,47 @@ var FONT_FAMILY = {
     source,
     '    init("Virgil", ...VirgilFontFaces);',
     `    init("Virgil", ...VirgilFontFaces);
-    for (const { name, slug, weights } of boardFonts) {
-      init(name, ...weights.map((weight) => ({
-        uri: "board-fonts/" + slug + "-" + weight + ".woff2",
-        descriptors: { weight: String(weight) }
+    for (const { name, faces } of boardFonts) {
+      init(name, ...faces.map(({ weight, style, file }) => ({
+        uri: "board-fonts/" + file,
+        descriptors: { weight: String(weight), style }
       })));
     }`,
   );
   source = replace(
     source,
     `    const iterator = _Fonts.fontFacesStylesGenerator(families, charsPerFamily);`,
-    `    const weightsPerFamily = new Map();
+    `    const facesPerFamily = new Map();
     for (const element of elements) {
       const font = boardFonts.find(({ id }) => id === element.fontFamily);
       if (!isTextElement(element) || !font) continue;
-      const weights = weightsPerFamily.get(font.id) ?? new Set();
-      const { weight } = getTextFormatting(element);
-      weights.add(font.weights.includes(weight) ? weight : 400);
-      weightsPerFamily.set(font.id, weights);
+      const needed = facesPerFamily.get(font.id) ?? new Set();
+      const base = getTextFormatting(element);
+      const styles = [base, ...safeTextRuns(element).map(({ style }) => ({ ...base, ...style }))];
+      for (const { weight, italic } of styles) {
+        const faceWeight = font.weights.includes(weight) ? weight : 400;
+        const faceStyle = italic && font.italic ? "italic" : "normal";
+        needed.add(faceWeight + "/" + faceStyle);
+      }
+      facesPerFamily.set(font.id, needed);
       const fallback = FONT_FAMILY.Nunito;
       charsPerFamily[fallback] ??= new Set();
       for (const char of element.originalText) charsPerFamily[fallback].add(char);
       if (!families.includes(fallback)) families.push(fallback);
     }
-    const iterator = _Fonts.fontFacesStylesGenerator(families, charsPerFamily, weightsPerFamily);`,
+    const iterator = _Fonts.fontFacesStylesGenerator(families, charsPerFamily, facesPerFamily);`,
   );
   source = replace(
     source,
     "static *fontFacesStylesGenerator(families, charsPerFamily)",
-    "static *fontFacesStylesGenerator(families, charsPerFamily, weightsPerFamily)",
+    "static *fontFacesStylesGenerator(families, charsPerFamily, facesPerFamily)",
   );
   source = replace(
     source,
     "for (const [fontFaceIndex, fontFace] of fontFaces.entries()) {",
     `for (const [fontFaceIndex, fontFace] of fontFaces.entries()) {
-        if (weightsPerFamily.has(family) && !weightsPerFamily.get(family).has(Number(fontFace.fontFace.weight))) continue;`,
+        const faceKey = fontFace.fontFace.weight + "/" + fontFace.fontFace.style;
+        if (facesPerFamily.has(family) && !facesPerFamily.get(family).has(faceKey)) continue;`,
   );
   source = replace(
     source,
@@ -155,14 +177,14 @@ var FONT_FAMILY = {
         fontFamily,
         fontSize: 16
       });`,
-    `      const weights = boardFonts.find(({ id }) => id === fontFamily)?.weights ?? [400];
-      for (const weight of weights) {
-      const font = getFontString({ fontFamily, fontSize: 16, textFormatting: { weight } });`,
+    `      const faces = boardFonts.find(({ id }) => id === fontFamily)?.faces ?? [{ weight: 400, style: "normal" }];
+      for (const [faceIndex, { weight, style }] of faces.entries()) {
+      const font = getFontString({ fontFamily, fontSize: 16, textFormatting: { weight, italic: style === "italic" } });`,
   );
   source = replace(
     source,
     "return [index, fontFaces];",
-    "return [index * 1000 + weight, fontFaces];",
+    "return [index * 10000 + faceIndex, fontFaces];",
   );
   source = replace(
     source,
@@ -399,14 +421,6 @@ var measureText = (text, font, lineHeight) => {`,
             }
           }
           node.appendChild(text);`,
-  );
-  source = replace(
-    source,
-    `      weights.add(font.weights.includes(weight) ? weight : 400);`,
-    `      weights.add(font.weights.includes(weight) ? weight : 400);
-      for (const { style } of safeTextRuns(element)) {
-        if (font.weights.includes(style?.weight)) weights.add(style.weight);
-      }`,
   );
   return (
     source +
@@ -879,10 +893,10 @@ export function excalidrawTypography(
       },
       transformIndexHtml() {
         const css = catalog
-          .flatMap(({ name, slug, weights }) =>
-            weights.map(
-              (weight) =>
-                `@font-face{font-family:${JSON.stringify(name)};font-weight:${weight};font-display:swap;src:url("${base}board-fonts/${slug}-${weight}.woff2") format("woff2")}`,
+          .flatMap((font) =>
+            boardFontFaces(font).map(
+              ({ weight, style, file }) =>
+                `@font-face{font-family:${JSON.stringify(font.name)};font-weight:${weight};font-style:${style};font-display:swap;src:url("${base}board-fonts/${file}") format("woff2")}`,
             ),
           )
           .join("\n");

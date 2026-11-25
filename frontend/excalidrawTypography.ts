@@ -461,8 +461,9 @@ function TextFormattingControls({ elements, appState, app, selectedFontFamily, u
   const set = (property, value) => updateData({
     textFormattingChange: { [property]: value }
   });
-  const toggle = (property, value, label, letter, off = false, style) => jsx34("button", {
+  const toggle = (property, value, label, letter, off = false, style, className) => jsx34("button", {
     type: "button",
+    className,
     title: label,
     "aria-label": label,
     "aria-pressed": all(property, value) ? true : some(property, value) ? "mixed" : false,
@@ -473,11 +474,14 @@ function TextFormattingControls({ elements, appState, app, selectedFontFamily, u
     children: letter
   }, property);
   const formatting = german ? "Textformatierung" : "Text formatting";
-  return jsxs20("div", { className: "excalidash-text-formatting", role: "group", "aria-label": formatting, children: [
-    toggle("weight", 700, german ? "Fett" : "Bold", german ? "F" : "B", 400, { fontWeight: 700 }),
-    toggle("italic", true, german ? "Kursiv" : "Italic", "I", false, { fontStyle: "italic" }),
-    toggle("underline", true, german ? "Unterstrichen" : "Underline", "U", false, { textDecoration: "underline" }),
-    toggle("strikethrough", true, german ? "Durchgestrichen" : "Strikethrough", "S", false, { textDecoration: "line-through" })
+  return jsxs20("div", { className: "FontPicker__container excalidash-text-formatting", role: "group", "aria-label": formatting, children: [
+    jsxs20("div", { className: "buttonList", children: [
+      toggle("weight", 700, german ? "Fett" : "Bold", german ? "F" : "B", 400, { fontWeight: 700 }),
+      toggle("italic", true, german ? "Kursiv" : "Italic", "I", false, { fontStyle: "italic" }),
+      toggle("underline", true, german ? "Unterstrichen" : "Underline", "U", false, { textDecoration: "underline" })
+    ] }),
+    jsx34(ButtonSeparator, {}),
+    jsx34("div", { children: toggle("strikethrough", true, german ? "Durchgestrichen" : "Strikethrough", "S", false, { textDecoration: "line-through" }, "standalone") })
   ] });
 }
 

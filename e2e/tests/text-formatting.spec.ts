@@ -36,7 +36,32 @@ test("board fonts and formatting survive editing, save, and native export", asyn
     await expect(editor).toBeVisible();
     await editor.fill(sample);
 
-    await page.getByTestId("font-family-show-fonts").click();
+    const fontTrigger = page.getByTestId("font-family-show-fonts");
+    const fontPicker = page.locator(".FontPicker__container").filter({
+      has: fontTrigger,
+    });
+    const format = page.getByRole("group", { name: "Text formatting" });
+    const buttonRects = (row: typeof format) =>
+      row.getByRole("button").evaluateAll((buttons) =>
+        buttons.map((button) => {
+          const { x, y, width, height } = button.getBoundingClientRect();
+          return { x, y, width, height };
+        }),
+      );
+    await expect(fontTrigger).toBeVisible();
+    await expect(format.getByRole("button")).toHaveCount(4);
+    const fontRects = await buttonRects(fontPicker);
+    const formatRects = await buttonRects(format);
+    expect(fontRects).toHaveLength(4);
+    expect(
+      formatRects.map(({ x, width, height }) => ({ x, width, height })),
+    ).toEqual(fontRects.map(({ x, width, height }) => ({ x, width, height })));
+    expect(new Set(formatRects.map(({ y }) => y)).size).toBe(1);
+    expect(formatRects[0].y).toBeGreaterThanOrEqual(
+      fontRects[0].y + fontRects[0].height,
+    );
+
+    await fontTrigger.click();
     for (const font of [
       "Kalam",
       "Luckiest Guy",
@@ -48,7 +73,6 @@ test("board fonts and formatting survive editing, save, and native export", asyn
     ]) {
       await expect(page.getByText(font, { exact: true })).toBeVisible();
     }
-    const format = page.getByRole("group", { name: "Text formatting" });
     await page.getByText("Redacted Script", { exact: true }).click();
     await expect(format.getByRole("button")).toHaveCount(4);
     await expect(format.getByRole("combobox")).toHaveCount(0);

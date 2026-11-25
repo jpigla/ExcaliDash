@@ -14,6 +14,7 @@ type BoardFont = {
   name: string;
   slug: string;
   weights: number[];
+  italic?: boolean;
   metrics: {
     unitsPerEm: number;
     ascender: number;
@@ -27,8 +28,13 @@ export const boardFonts: BoardFont[] = JSON.parse(
   readFileSync(resolve(assetDirectory, "catalog.json"), "utf8"),
 );
 export const boardFontById = new Map(boardFonts.map((font) => [font.id, font]));
-export const boardFontFiles = boardFonts.flatMap(({ slug, weights }) =>
-  weights.map((weight) => resolve(assetDirectory, `${slug}-${weight}.ttf`)),
+export const boardFontFiles = boardFonts.flatMap(({ slug, weights, italic }) =>
+  weights.flatMap((weight) => {
+    const regular = resolve(assetDirectory, `${slug}-${weight}.ttf`);
+    return italic
+      ? [regular, resolve(assetDirectory, `${slug}-${weight}-italic.ttf`)]
+      : [regular];
+  }),
 );
 
 export const textRunsSchema = z

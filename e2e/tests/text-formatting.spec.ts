@@ -228,6 +228,163 @@ test("board fonts and formatting survive editing, save, and native export", asyn
   }
 });
 
+test("new font families render and embed the required faces in image exports", async ({
+  page,
+  request,
+}) => {
+  const drawing = await createDrawing(request, { name: "Board fonts E2E" });
+  const families = [
+    { name: "Montserrat", id: 108, nativeItalic: true },
+    { name: "Manrope", id: 109, nativeItalic: false },
+    { name: "Roboto", id: 110, nativeItalic: true },
+    { name: "JetBrains Mono", id: 111, nativeItalic: true },
+  ];
+  const sample = "Grüße aus Köln – ẞ €";
+  try {
+    await page.addInitScript(() => {
+      Reflect.deleteProperty(window, "showOpenFilePicker");
+      Reflect.deleteProperty(window, "showSaveFilePicker");
+    });
+    await page.goto(`/editor/${drawing.id}`);
+    await expect(
+      page.getByRole("heading", { name: drawing.name }),
+    ).toBeVisible();
+    const canvas = page.locator("canvas.excalidraw__canvas.interactive");
+    const editor = page.locator(".excalidraw-wysiwyg");
+    await canvas.click({ position: { x: 410, y: 210 } });
+    for (const [index, { name, nativeItalic }] of families.entries()) {
+      await page.keyboard.press("t");
+      await canvas.click({ position: { x: 450, y: 235 + 60 * index } });
+      await editor.fill(sample);
+      await editor.evaluate((element) => {
+        const selection = document.getSelection()!;
+        selection.setBaseAndExtent(
+          element.firstChild!,
+          0,
+          element.firstChild!,
+          5,
+        );
+      });
+      await editor.press("ControlOrMeta+b");
+      await editor.press("ControlOrMeta+i");
+      await page.getByTestId("font-family-show-fonts").click();
+      await page.getByText(name, { exact: true }).click();
+      const formatted = editor.getByText("Grüße", { exact: true });
+      await expect(formatted).toHaveCSS("font-style", "italic");
+      await expect(formatted).toHaveCSS("font-weight", "700");
+      const faces = await page.evaluate(
+        async ({ name, sample }) => {
+          const faces = await document.fonts.load(
+            `italic 700 20px "${name}"`,
+            sample,
+          );
+          return faces.map(({ style, weight }) => ({ style, weight }));
+        },
+        { name, sample },
+      );
+      expect(faces).toContainEqual({
+        style: nativeItalic ? "italic" : "normal",
+        weight: "700",
+      });
+      await editor.press("Escape");
+    }
+
+    await expect
+      .poll(async () =>
+        (await getDrawing(request, drawing.id)).elements
+          ?.filter(({ type }) => type === "text")
+          .map(({ fontFamily }) => fontFamily),
+      )
+      .toEqual(families.map(({ id }) => id));
+    await page.reload();
+    await page.getByTestId("main-menu-trigger").click();
+    await page.getByTestId("image-export-button").click();
+    const svgDownload = page.waitForEvent("download", { timeout: 15_000 });
+    await page.getByRole("button", { name: "Export to SVG" }).click();
+    const svg = await readFile((await (await svgDownload).path())!, "utf8");
+    const exported = await page.evaluate((markup) => {
+      const doc = new DOMParser().parseFromString(markup, "image/svg+xml");
+      const unquote = (family: string) =>
+        family.trim().replace(/^["']|["']$/g, "");
+      const css = new CSSStyleSheet();
+      css.replaceSync(doc.querySelector(".style-fonts")?.textContent ?? "");
+      return {
+        faces: [...css.cssRules].flatMap((rule) =>
+          rule instanceof CSSFontFaceRule &&
+          rule.style.getPropertyValue("src").includes("data:")
+            ? [
+                {
+                  family: unquote(rule.style.getPropertyValue("font-family")),
+                  weight: rule.style.getPropertyValue("font-weight"),
+                  style: rule.style.getPropertyValue("font-style"),
+                },
+              ]
+            : [],
+        ),
+        texts: [...doc.querySelectorAll("text")].map((text) => ({
+          family: unquote(
+            text.getAttribute("font-family")?.split(",")[0] ?? "",
+          ),
+          text: text.textContent,
+          boldItalic: Boolean(
+            text.querySelector('tspan[font-weight="700"][font-style="italic"]'),
+          ),
+        })),
+      };
+    }, svg);
+    for (const { name, nativeItalic } of families) {
+      expect(exported.faces).toEqual(
+        expect.arrayContaining([
+          { family: name, weight: "400", style: "normal" },
+          {
+            family: name,
+            weight: "700",
+            style: nativeItalic ? "italic" : "normal",
+          },
+        ]),
+      );
+      expect(exported.texts).toContainEqual({
+        family: name,
+        text: sample,
+        boldItalic: true,
+      });
+    }
+    const pngDownload = page.waitForEvent("download", { timeout: 15_000 });
+    await page.getByRole("button", { name: "Export to PNG" }).click();
+    const png = await readFile((await (await pngDownload).path())!);
+    const inkBands = await page.evaluate(async (base64) => {
+      const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+      const image = await createImageBitmap(
+        new Blob([bytes], { type: "image/png" }),
+      );
+      const { width, height } = image;
+      const context = new OffscreenCanvas(width, height).getContext("2d")!;
+      context.drawImage(image, 0, 0);
+      const { data } = context.getImageData(0, 0, width, height);
+      const bands: number[][] = [];
+      let lastInkRow = -Infinity;
+      for (let y = 0; y < height; y++) {
+        let ink = 0;
+        for (let x = 0; x < width; x++) {
+          const offset = (y * width + x) * 4;
+          if (data[offset + 3] > 128 && data[offset] < 128) ink++;
+        }
+        if (!ink) continue;
+        if (y - lastInkRow > 10) bands.push([]);
+        bands.at(-1)!.push(ink);
+        lastInkRow = y;
+      }
+      return bands;
+    }, png.toString("base64"));
+    expect(inkBands).toHaveLength(families.length);
+    expect(new Set(inkBands.map((band) => band.join(","))).size).toBe(
+      families.length,
+    );
+  } finally {
+    await deleteDrawing(request, drawing.id);
+  }
+});
+
 test("keyboard shortcuts toggle formatting on a selected text element", async ({
   page,
   request,

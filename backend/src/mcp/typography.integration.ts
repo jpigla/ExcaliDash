@@ -34,7 +34,14 @@ it("renders real cuts, synthesized styles, and decorations in MCP PNGs", () => {
 
   const regular = render(101);
   expect(textFormattingSchema.safeParse({ weight: 300 }).success).toBe(false);
-  expect(render(101, { weight: 700 })).not.toBe(regular);
+  for (const { id, weights, italic } of boardFonts) {
+    if (weights.includes(700))
+      expect(render(id, { weight: 700 })).not.toBe(render(id));
+    if (italic)
+      expect(render(id, { weight: 700, italic: true })).not.toBe(
+        render(id, { weight: 700 }),
+      );
+  }
   for (const format of [
     { italic: true },
     { underline: true },

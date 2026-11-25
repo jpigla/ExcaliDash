@@ -123,9 +123,11 @@ function draw(element: Element): string {
     return lines
       .map((line, index) => {
         const y = baseline + index * lineHeight;
-        const tilt = format.italic
-          ? ` transform="translate(${y * 0.22} 0) skewX(-12.4074)"`
-          : "";
+        const tilt = !format.italic
+          ? ""
+          : font?.italic
+            ? ' font-style="italic"'
+            : ` transform="translate(${y * 0.22} 0) skewX(-12.4074)"`;
         const mode = decoration ? ` text-decoration="${decoration}"` : "";
         return `<text x="${x}" y="${y}"${family} font-size="${fontSize}" text-anchor="${align}" font-weight="${syntheticBold ? 400 : weight}" fill="${stroke}"${bold}${mode}${tilt}>${escape(line)}</text>`;
       })

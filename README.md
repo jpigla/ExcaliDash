@@ -12,7 +12,7 @@ Open-source, self-hosted **Excalidraw** dashboard and **Excalidraw+ alternative*
 ## What's different in this fork
 
 This fork builds on [ExcaliDash](https://github.com/ZimengXiong/ExcaliDash) and
-extends board sharing, account profiles, and editor navigation.
+extends board sharing, account profiles, editor navigation, and text formatting.
 
 - **Guest links without accounts.** Create several links for the same board.
   Each link can allow live viewing or editing and can be open or password protected.
@@ -36,6 +36,15 @@ extends board sharing, account profiles, and editor navigation.
   preview fits the visible drawing.
 - **Editor toolbar.** With auto-hide enabled, the top bar stays visible while
   the pointer is over it. Move to the top edge to bring it back.
+- **More board fonts.** The fork adds Kalam, Luckiest Guy, Patrick Hand,
+  Redacted Script, Indie Flower, Gochi Hand, Schoolbell, Montserrat, Manrope,
+  Roboto, and JetBrains Mono to the font picker.
+- **Text formatting.** Use the **Text formatting** panel to apply bold,
+  italic, underline, or strikethrough to a text element or selected text.
+- **Individual text colors.** Double-click a text element, select one or more
+  letters or words, and choose a swatch or enter a hex value under **Selected
+  text color**. A single text element can contain several colors, and those
+  colors are preserved when the board is reopened or exported as SVG or PNG.
 - **Agent access over MCP.** Optional scoped access to create, draw, inspect,
   and edit persistent boards. See the [MCP setup guide](docs/guide/mcp.md).
 - **Security fixes.** ZIP imports enforce size limits during decompression,
